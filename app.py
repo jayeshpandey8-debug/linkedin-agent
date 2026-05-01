@@ -25,6 +25,9 @@ import linkedin_api
 app     = Flask(__name__)
 IST     = pytz.timezone("Asia/Kolkata")
 
+from trigger import trigger_bp
+app.register_blueprint(trigger_bp)
+
 # ─────────────────────────────────────────────────────────────
 # Scheduler Setup
 # ─────────────────────────────────────────────────────────────
