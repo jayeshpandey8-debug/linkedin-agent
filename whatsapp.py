@@ -1,5 +1,5 @@
 """
-whatsapp.py - Fixed version with message splitting
+whatsapp.py - Fixed with message splitting + topic on demand
 """
 from twilio.rest import Client
 from datetime import datetime
@@ -49,7 +49,7 @@ def send_draft_for_approval(post_id: int, post: dict) -> bool:
     if len(post_text) > max_post_len:
         post_text = post_text[:max_post_len] + "..."
     part1 = f"{header}\n\n{post_text}"
-    part2 = "─────────────────────\nReply:\n✅ *YES* — Post it\n✏️ *EDIT [feedback]*\n🔄 *REDO* — Regenerate\n❌ *NO* — Skip"
+    part2 = "─────────────────────\nReply:\n✅ *YES* — Post it\n✏️ *EDIT [feedback]*\n🔄 *REDO* — Regenerate\n❌ *NO* — Skip\n📌 *TOPIC [topic]* — New topic"
     send_message(part1)
     return send_message(part2)
 
@@ -57,14 +57,46 @@ def send_engagement_reminder(post_id: int) -> bool:
     return send_message(f"🔔 *REMINDER*\nPost #{post_id} is live 30 min!\n\nOpen LinkedIn → Like + comment on your post now.\nThis boosts your reach! 🚀")
 
 def send_weekly_summary(stats: dict) -> bool:
-    return send_message(f"📊 *WEEKLY SUMMARY*\nWeek of {stats.get('week_start','')}\n\nGenerated: {stats.get('posts_generated',0)}\n✅ Posted: {stats.get('posts_posted',0)}\n❌ Rejected: {stats.get('posts_rejected',0)}\n⏭ Skipped: {stats.get('posts_skipped',0)}")
+    return send_message(
+        f"📊 *WEEKLY SUMMARY*\n"
+        f"Week of {stats.get('week_start','')}\n\n"
+        f"Generated: {stats.get('posts_generated',0)}\n"
+        f"✅ Posted: {stats.get('posts_posted',0)}\n"
+        f"❌ Rejected: {stats.get('posts_rejected',0)}\n"
+        f"⏭ Skipped: {stats.get('posts_skipped',0)}\n\n"
+        f"💡 Keep posting consistently!"
+    )
 
 def send_error_alert(error_msg: str) -> bool:
     return send_message(f"🚨 *AGENT ERROR*\n\n{error_msg}")
 
+def send_topic_confirmation(topic: str) -> bool:
+    return send_message(
+        f"🔍 *TOPIC RECEIVED*\n\n"
+        f"Topic: _{topic}_\n\n"
+        f"Searching news and generating post...\n"
+        f"Check WhatsApp in 60 seconds! ⏳"
+    )
+
 def parse_reply(reply_text: str) -> dict:
     text = reply_text.strip().upper()
     original = reply_text.strip()
+
+    # TOPIC command — user sends custom topic
+    if original.upper().startswith("TOPIC"):
+        topic = original[5:].strip().lstrip(":").strip()
+        return {"action": "topic", "feedback": topic}
+
+    # WRITE command — alternative to TOPIC
+    if original.upper().startswith("WRITE"):
+        topic = original[5:].strip().lstrip(":").strip()
+        return {"action": "topic", "feedback": topic}
+
+    # ABOUT command
+    if original.upper().startswith("ABOUT"):
+        topic = original[5:].strip().lstrip(":").strip()
+        return {"action": "topic", "feedback": topic}
+
     if text in ("YES","Y","YEP","YA","OK","OKAY","POST","POST IT","HAAN"):
         return {"action":"approve","feedback":""}
     if text in ("NO","N","SKIP","CANCEL","PASS","NAHI"):
