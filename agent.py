@@ -210,7 +210,8 @@ def handle_whatsapp_reply(reply_text: str) -> str:
                 import image_fetcher
                 img = image_fetcher.get_image_for_post(
                     pillar=post.get("pillar","any"),
-                    topic=post.get("topic","")
+                    topic=post.get("topic",""),
+                    post_text=post.get("post_text","")
                 )
                 if img:
                     image_bytes = image_fetcher.download_image(img["url"])
