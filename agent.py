@@ -196,7 +196,21 @@ def handle_whatsapp_reply(reply_text: str) -> str:
         post = store.get_post(post_id)
         if not post:
             return "Post not found."
-        result = linkedin_api.post_to_linkedin(post["post_text"])
+        # Fetch image if enabled
+        image_bytes = None
+        if config.INCLUDE_IMAGE:
+            try:
+                import image_fetcher
+                img = image_fetcher.get_image_for_post(
+                    pillar=post.get("pillar","any"),
+                    topic=post.get("topic","")
+                )
+                if img:
+                    image_bytes = image_fetcher.download_image(img["url"])
+                    print(f"[Agent] Image ready: {img["photographer"]}")
+            except Exception as e:
+                print(f"[Agent] Image fetch error: {e}")
+        result = linkedin_api.post_to_linkedin(post["post_text"], image_bytes=image_bytes)
         if result["success"]:
             store.update_status(post_id, "posted", linkedin_post_id=result["post_id"])
             _pending_post_id = None
@@ -272,3 +286,14 @@ def run_weekly_summary():
 if __name__ == "__main__":
     store.init_db()
     run_daily_cycle()
+
+
+def approve_and_post(post_id: int) -> dict:
+    """Direct approve from dashboard."""
+    post = store.get_post(post_id)
+    if not post:
+        return {"success": False, "error": "Post not found"}
+    result = linkedin_api.post_to_linkedin(post["post_text"])
+    if result["success"]:
+        store.update_status(post_id, "posted", linkedin_post_id=result["post_id"])
+    return result

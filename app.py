@@ -183,6 +183,32 @@ def api_test_whatsapp():
     return jsonify({"success": result})
 
 
+@app.route("/api/posts/<int:post_id>/reject", methods=["GET","POST"])
+def api_reject_post(post_id):
+    """Reject/clean up an old draft post."""
+    store.update_status(post_id, "rejected")
+    return jsonify({"success": True, "message": f"Post #{post_id} marked as rejected."})
+
+
+@app.route("/api/posts/<int:post_id>/approve", methods=["GET","POST"])
+def api_approve_post(post_id):
+    """Approve and post directly."""
+    result = agent.approve_and_post(post_id)
+    return jsonify(result)
+
+
+@app.route("/api/cleanup", methods=["GET","POST"])
+def api_cleanup():
+    """Mark all old drafts without whatsapp_sent as rejected."""
+    posts = store.get_all_posts(limit=50)
+    cleaned = 0
+    for p in posts:
+        if p["status"] == "draft" and not p.get("sent_to_whatsapp_at"):
+            store.update_status(p["id"], "rejected")
+            cleaned += 1
+    return jsonify({"success": True, "cleaned": cleaned, "message": f"Cleaned {cleaned} old drafts."})
+
+
 @app.route("/api/weekly-summary", methods=["POST"])
 def api_weekly_summary():
     """Manually trigger weekly summary."""
