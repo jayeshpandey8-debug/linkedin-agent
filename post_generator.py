@@ -227,6 +227,21 @@ Write the post now:
 
     post_text = response.content[0].text.strip()
 
+    # Add source URL at bottom if available
+    source_url = ""
+    for n in news_items:
+        if n.get("url") and "rbi.org.in" in n.get("url",""):
+            source_url = n["url"]
+            break
+    if not source_url:
+        for n in news_items:
+            if n.get("url") and n["url"].startswith("http"):
+                source_url = n["url"]
+                break
+
+    if source_url:
+        post_text = post_text + f"\n\n📌 Source: {source_url}"
+
     # Extract topic keyword for memory
     topic_words = news_items[0]["title"].split()[:5] if news_items else [pillar]
     topic       = " ".join(topic_words)
@@ -276,6 +291,12 @@ def regenerate_post(
 
     post_text = response.content[0].text.strip()
     topic     = news_items[0]["title"][:50] if news_items else pillar
+
+    # Add source URL at bottom if available
+    for n in news_items:
+        if n.get("url") and n["url"].startswith("http"):
+            post_text = post_text + f"\n\n📌 Source: {n['url']}"
+            break
 
     return {
         "post_text":    post_text,

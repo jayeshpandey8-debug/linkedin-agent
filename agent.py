@@ -135,6 +135,13 @@ end with engagement question, 3-4 hashtags. Start directly with hook line.""",
             }],
         )
         post_text = response.content[0].text.strip()
+
+        # Add source URL at bottom
+        for n in news:
+            if n.get("url") and n["url"].startswith("http"):
+                post_text = post_text + f"\n\n📌 Source: {n['url']}"
+                break
+
     except Exception as e:
         whatsapp.send_error_alert(f"Post generation failed: {e}")
         return
