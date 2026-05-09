@@ -156,3 +156,10 @@ TONE RULES:
 
 # ── No-Repeat Memory ───────────────────────────────────────
 MEMORY_LOOKBACK_POSTS   = 30   # Agent checks last 30 posts before picking topic
+
+# ── Pexels API (free image search) ────────────────────────
+# Get free key at: pexels.com/api
+PEXELS_API_KEY = os.getenv("PEXELS_API_KEY", "")
+
+# ── Image Settings ─────────────────────────────────────────
+INCLUDE_IMAGE  = os.getenv("INCLUDE_IMAGE", "true").lower() == "true"

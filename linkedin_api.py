@@ -1,7 +1,5 @@
 """
-linkedin_api.py
-LinkedIn UGC Posts API integration.
-Handles posting, token verification, OAuth flow.
+linkedin_api.py - Updated with image posting support
 """
 
 import requests
@@ -21,7 +19,7 @@ def verify_token() -> dict:
     resp = requests.get(f"{LINKEDIN_API_BASE}/userinfo", headers=_headers(), timeout=10)
     if resp.status_code == 200:
         data = resp.json()
-        print(f"[LinkedIn] Token valid — {data.get('name', '?')}")
+        print(f"[LinkedIn] Token valid — {data.get('name','?')}")
         return data
     print(f"[LinkedIn] Token invalid: {resp.status_code}")
     return {}
@@ -32,16 +30,59 @@ def get_person_urn() -> str:
         return config.LINKEDIN_PERSON_URN
     resp = requests.get(f"{LINKEDIN_API_BASE}/me", headers=_headers(), timeout=10)
     if resp.status_code == 200:
-        uid = resp.json().get("id", "")
+        uid = resp.json().get("id","")
         return f"urn:li:person:{uid}"
     raise RuntimeError(f"Cannot fetch URN: {resp.status_code} {resp.text}")
 
 
-def post_to_linkedin(post_text: str) -> dict:
+def register_image_upload(person_urn: str) -> dict | None:
+    """Step 1: Register image upload with LinkedIn."""
+    url = f"{LINKEDIN_API_BASE}/assets?action=registerUpload"
+    payload = {
+        "registerUploadRequest": {
+            "recipes": ["urn:li:digitalmediaRecipe:feedshare-image"],
+            "owner": person_urn,
+            "serviceRelationships": [{
+                "relationshipType": "OWNER",
+                "identifier": "urn:li:userGeneratedContent"
+            }]
+        }
+    }
+    try:
+        resp = requests.post(url, headers=_headers(), json=payload, timeout=15)
+        if resp.status_code == 200:
+            data = resp.json()
+            asset = data["value"]["asset"]
+            upload_url = data["value"]["uploadMechanism"]["com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"]["uploadUrl"]
+            print(f"[LinkedIn] Image registered. Asset: {asset}")
+            return {"asset": asset, "upload_url": upload_url}
+    except Exception as e:
+        print(f"[LinkedIn] Register image error: {e}")
+    return None
+
+
+def upload_image_bytes(upload_url: str, image_bytes: bytes) -> bool:
+    """Step 2: Upload image bytes to LinkedIn."""
+    try:
+        resp = requests.put(
+            upload_url,
+            data=image_bytes,
+            headers={"Authorization": f"Bearer {config.LINKEDIN_ACCESS_TOKEN}"},
+            timeout=30,
+        )
+        if resp.status_code in (200, 201):
+            print("[LinkedIn] Image uploaded successfully.")
+            return True
+        print(f"[LinkedIn] Image upload failed: {resp.status_code}")
+    except Exception as e:
+        print(f"[LinkedIn] Upload error: {e}")
+    return False
+
+
+def post_to_linkedin(post_text: str, image_bytes: bytes = None) -> dict:
     """
-    Post text to LinkedIn. Returns success/failure dict.
-    For poll format, post as text post with the poll options included
-    (LinkedIn Poll API requires special permissions not in basic tier).
+    Post to LinkedIn with optional image.
+    If image_bytes provided, uploads image first then attaches to post.
     """
     if not config.LINKEDIN_ACCESS_TOKEN:
         return {"success": False, "post_id": None, "error": "No access token."}
@@ -51,19 +92,54 @@ def post_to_linkedin(post_text: str) -> dict:
     except Exception as e:
         return {"success": False, "post_id": None, "error": str(e)}
 
-    payload = {
-        "author":         person_urn,
-        "lifecycleState": "PUBLISHED",
-        "specificContent": {
-            "com.linkedin.ugc.ShareContent": {
-                "shareCommentary":    {"text": post_text},
-                "shareMediaCategory": "NONE",
-            }
-        },
-        "visibility": {
-            "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
-        },
-    }
+    # Try to upload image if provided
+    image_asset = None
+    if image_bytes:
+        print("[LinkedIn] Uploading image...")
+        reg = register_image_upload(person_urn)
+        if reg:
+            uploaded = upload_image_bytes(reg["upload_url"], image_bytes)
+            if uploaded:
+                image_asset = reg["asset"]
+
+    # Build post payload
+    if image_asset:
+        # Post with image
+        payload = {
+            "author":          person_urn,
+            "lifecycleState":  "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary":    {"text": post_text},
+                    "shareMediaCategory": "IMAGE",
+                    "media": [{
+                        "status":      "READY",
+                        "media":       image_asset,
+                        "title":       {"text": ""},
+                    }]
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            },
+        }
+        print("[LinkedIn] Posting with image...")
+    else:
+        # Text only post
+        payload = {
+            "author":          person_urn,
+            "lifecycleState":  "PUBLISHED",
+            "specificContent": {
+                "com.linkedin.ugc.ShareContent": {
+                    "shareCommentary":    {"text": post_text},
+                    "shareMediaCategory": "NONE",
+                }
+            },
+            "visibility": {
+                "com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"
+            },
+        }
+        print("[LinkedIn] Posting text only...")
 
     resp = requests.post(
         f"{LINKEDIN_API_BASE}/ugcPosts",
@@ -88,7 +164,7 @@ def get_oauth_url(redirect_uri: str) -> str:
         f"?response_type=code"
         f"&client_id={config.LINKEDIN_CLIENT_ID}"
         f"&redirect_uri={redirect_uri}"
-        f"&scope={scope.replace(' ', '%20')}"
+        f"&scope={scope.replace(' ','%20')}"
     )
 
 
@@ -106,5 +182,4 @@ def exchange_code_for_token(code: str, redirect_uri: str) -> dict:
     )
     if resp.status_code == 200:
         return resp.json()
-    print(f"[LinkedIn] Token exchange failed: {resp.status_code} {resp.text}")
     return {}
