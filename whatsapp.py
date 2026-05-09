@@ -1,5 +1,5 @@
 """
-whatsapp.py - Fixed with message splitting + topic on demand
+whatsapp.py - Fixed with correct post ID tracking
 """
 from twilio.rest import Client
 from datetime import datetime
@@ -38,27 +38,59 @@ def _split_message(body: str) -> list:
     return chunks
 
 def send_draft_for_approval(post_id: int, post: dict) -> bool:
-    pillar_emoji = {"regulatory":"📋","rca_fmea":"🔍","lean_excellence":"⚙️","pmo_genai":"🤖","any":"💡"}
-    fmt_label = {"news_insight":"News + Insight","did_you_know":"Did You Know?","dmaic_case":"DMAIC Case","poll":"Poll","personal_story":"Personal Story","rca_tip":"RCA Tip"}
+    pillar_emoji = {
+        "regulatory":"📋","rca_fmea":"🔍",
+        "lean_excellence":"⚙️","pmo_genai":"🤖","any":"💡"
+    }
+    fmt_label = {
+        "news_insight":"News + Insight","did_you_know":"Did You Know?",
+        "dmaic_case":"DMAIC Case","poll":"Poll",
+        "personal_story":"Personal Story","rca_tip":"RCA Tip"
+    }
     emoji = pillar_emoji.get(post.get("pillar",""),"📝")
     fmt   = fmt_label.get(post.get("format",""),"Post")
     now   = datetime.now().strftime("%a, %d %b — %I:%M %p IST")
-    header = f"{emoji} *LINKEDIN DRAFT #{post_id}*\n📅 {now}\n🏷 Format: {fmt}\n─────────────────────"
+
+    # Include post_id clearly in header so agent never confuses posts
+    header = (
+        f"{emoji} *LINKEDIN DRAFT*\n"
+        f"📅 {now}\n"
+        f"🏷 Format: {fmt}\n"
+        f"🔑 Post ID: #{post_id}\n"
+        f"─────────────────────"
+    )
+
     post_text = post.get("post_text","")
-    max_post_len = MAX_LENGTH - len(header) - 50
+    max_post_len = MAX_LENGTH - len(header) - 100
     if len(post_text) > max_post_len:
         post_text = post_text[:max_post_len] + "..."
+
     part1 = f"{header}\n\n{post_text}"
-    part2 = "─────────────────────\nReply:\n✅ *YES* — Post it\n✏️ *EDIT [feedback]*\n🔄 *REDO* — Regenerate\n❌ *NO* — Skip\n📌 *TOPIC [topic]* — New topic"
+    part2 = (
+        f"─────────────────────\n"
+        f"This is Post ID #{post_id}\n"
+        f"Reply:\n"
+        f"✅ *YES* — Post it\n"
+        f"✏️ *EDIT [feedback]*\n"
+        f"🔄 *REDO* — Regenerate\n"
+        f"❌ *NO* — Skip\n"
+        f"📌 *TOPIC [topic]* — New topic"
+    )
+
     send_message(part1)
     return send_message(part2)
 
 def send_engagement_reminder(post_id: int) -> bool:
-    return send_message(f"🔔 *REMINDER*\nPost #{post_id} is live 30 min!\n\nOpen LinkedIn → Like + comment on your post now.\nThis boosts your reach! 🚀")
+    return send_message(
+        f"🔔 *ENGAGEMENT REMINDER*\n\n"
+        f"Post #{post_id} has been live for 30 minutes!\n\n"
+        f"👉 Open LinkedIn now → Like + comment on your post.\n\n"
+        f"This boosts your reach significantly! 🚀"
+    )
 
 def send_weekly_summary(stats: dict) -> bool:
     return send_message(
-        f"📊 *WEEKLY SUMMARY*\n"
+        f"📊 *WEEKLY LINKEDIN SUMMARY*\n"
         f"Week of {stats.get('week_start','')}\n\n"
         f"Generated: {stats.get('posts_generated',0)}\n"
         f"✅ Posted: {stats.get('posts_posted',0)}\n"
@@ -79,23 +111,14 @@ def send_topic_confirmation(topic: str) -> bool:
     )
 
 def parse_reply(reply_text: str) -> dict:
-    text = reply_text.strip().upper()
+    text     = reply_text.strip().upper()
     original = reply_text.strip()
 
-    # TOPIC command — user sends custom topic
-    if original.upper().startswith("TOPIC"):
-        topic = original[5:].strip().lstrip(":").strip()
-        return {"action": "topic", "feedback": topic}
-
-    # WRITE command — alternative to TOPIC
-    if original.upper().startswith("WRITE"):
-        topic = original[5:].strip().lstrip(":").strip()
-        return {"action": "topic", "feedback": topic}
-
-    # ABOUT command
-    if original.upper().startswith("ABOUT"):
-        topic = original[5:].strip().lstrip(":").strip()
-        return {"action": "topic", "feedback": topic}
+    # TOPIC / WRITE / ABOUT commands
+    for cmd in ["TOPIC","WRITE","ABOUT"]:
+        if original.upper().startswith(cmd):
+            topic = original[len(cmd):].strip().lstrip(":").strip()
+            return {"action":"topic","feedback":topic}
 
     if text in ("YES","Y","YEP","YA","OK","OKAY","POST","POST IT","HAAN"):
         return {"action":"approve","feedback":""}
