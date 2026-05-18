@@ -1,5 +1,5 @@
 """
-store.py - Fixed to always return most recently WhatsApp-sent post
+store.py - Fixed with permanent post ID tracking + active post DB storage
 """
 import sqlite3
 import json
@@ -36,6 +36,15 @@ def init_db():
                 day_of_week         INTEGER
             )
         """)
+        # ── NEW: Active post tracking table ──────────────
+        # Survives server restarts unlike in-memory variables
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS agent_state (
+                key   TEXT PRIMARY KEY,
+                value TEXT,
+                updated_at TEXT
+            )
+        """)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS weekly_stats (
                 id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -51,6 +60,38 @@ def init_db():
         """)
         conn.commit()
     print("[Store] DB initialised.")
+
+# ── Active Post Tracking (survives restarts) ───────────────
+
+def set_active_post(post_id: int):
+    """Save active pending post ID to DB — survives server restarts."""
+    with _conn() as conn:
+        conn.execute("""
+            INSERT OR REPLACE INTO agent_state (key, value, updated_at)
+            VALUES ('active_post_id', ?, ?)
+        """, (str(post_id), datetime.now().isoformat()))
+        conn.commit()
+    print(f"[Store] Active post set: #{post_id}")
+
+def get_active_post_id() -> int | None:
+    """Get active pending post ID from DB."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT value FROM agent_state WHERE key = 'active_post_id'"
+        ).fetchone()
+        if row and row["value"]:
+            return int(row["value"])
+    return None
+
+def clear_active_post():
+    """Clear active post after it's been handled."""
+    with _conn() as conn:
+        conn.execute(
+            "DELETE FROM agent_state WHERE key = 'active_post_id'"
+        )
+        conn.commit()
+
+# ── Post CRUD ──────────────────────────────────────────────
 
 def save_draft(post: dict) -> int:
     with _conn() as conn:
@@ -75,7 +116,8 @@ def save_draft(post: dict) -> int:
         return cur.lastrowid
 
 def update_status(post_id: int, status: str, **kwargs):
-    allowed = {"linkedin_post_id","feedback","impressions","sent_to_whatsapp_at","approved_at","posted_at"}
+    allowed = {"linkedin_post_id","feedback","impressions",
+               "sent_to_whatsapp_at","approved_at","posted_at"}
     sets = ["status = ?"]
     vals = [status]
     if status == "posted" and "posted_at" not in kwargs:
@@ -90,54 +132,69 @@ def update_status(post_id: int, status: str, **kwargs):
             vals.append(v)
     vals.append(post_id)
     with _conn() as conn:
-        conn.execute(f"UPDATE posts SET {', '.join(sets)} WHERE id = ?", vals)
+        conn.execute(
+            f"UPDATE posts SET {', '.join(sets)} WHERE id = ?", vals
+        )
         conn.commit()
 
 def update_post_text(post_id: int, new_text: str):
     with _conn() as conn:
-        conn.execute("UPDATE posts SET post_text = ?, status = 'draft' WHERE id = ?", (new_text, post_id))
+        conn.execute(
+            "UPDATE posts SET post_text = ?, status = 'draft' WHERE id = ?",
+            (new_text, post_id)
+        )
         conn.commit()
 
 def get_post(post_id: int) -> dict | None:
     with _conn() as conn:
-        row = conn.execute("SELECT * FROM posts WHERE id = ?", (post_id,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM posts WHERE id = ?", (post_id,)
+        ).fetchone()
         return dict(row) if row else None
 
 def get_latest_pending() -> dict | None:
-    """
-    FIXED: Always returns the MOST RECENTLY sent WhatsApp draft.
-    Prioritises posts with status=whatsapp_sent over plain drafts.
-    """
+    """Get most recently WhatsApp-sent post — never picks old drafts."""
     with _conn() as conn:
-        # First try: get most recently WhatsApp-sent post
+        # Priority 1: active post from DB state
+        active_id = get_active_post_id()
+        if active_id:
+            row = conn.execute(
+                "SELECT * FROM posts WHERE id = ?", (active_id,)
+            ).fetchone()
+            if row and dict(row).get("status") not in ("posted","rejected","failed"):
+                return dict(row)
+
+        # Priority 2: most recently WhatsApp-sent
         row = conn.execute("""
             SELECT * FROM posts
             WHERE status = 'whatsapp_sent'
             ORDER BY sent_to_whatsapp_at DESC, id DESC
             LIMIT 1
         """).fetchone()
-
         if row:
             return dict(row)
 
-        # Fallback: get most recent draft
+        # Priority 3: most recent draft (last resort)
         row = conn.execute("""
             SELECT * FROM posts
             WHERE status = 'draft'
-            ORDER BY id DESC
-            LIMIT 1
+            ORDER BY id DESC LIMIT 1
         """).fetchone()
-
         return dict(row) if row else None
 
 def get_all_posts(limit: int = 50) -> list[dict]:
     with _conn() as conn:
-        rows = conn.execute("SELECT * FROM posts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM posts ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
         return [dict(r) for r in rows]
 
 def get_recent_topics(limit: int = 30) -> list[str]:
     with _conn() as conn:
-        rows = conn.execute("SELECT topic, pillar, keywords_used FROM posts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT topic, keywords_used FROM posts ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
         topics = []
         for r in rows:
             if r["topic"]:
@@ -151,7 +208,10 @@ def get_recent_topics(limit: int = 30) -> list[str]:
 
 def get_recent_hashtags(limit: int = 7) -> list[str]:
     with _conn() as conn:
-        rows = conn.execute("SELECT hashtags_used FROM posts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT hashtags_used FROM posts ORDER BY id DESC LIMIT ?",
+            (limit,)
+        ).fetchall()
         tags = []
         for r in rows:
             try:
@@ -162,13 +222,15 @@ def get_recent_hashtags(limit: int = 7) -> list[str]:
 
 def get_recent_pillars(limit: int = 5) -> list[str]:
     with _conn() as conn:
-        rows = conn.execute("SELECT pillar FROM posts ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        rows = conn.execute(
+            "SELECT pillar FROM posts ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
         return [r["pillar"] for r in rows if r["pillar"]]
 
 def get_week_stats() -> dict:
     with _conn() as conn:
         from datetime import timedelta
-        today = datetime.now().date()
+        today      = datetime.now().date()
         week_start = today - timedelta(days=today.weekday())
         rows = conn.execute("""
             SELECT status, COUNT(*) as cnt FROM posts

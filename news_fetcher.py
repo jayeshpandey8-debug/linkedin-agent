@@ -1,230 +1,350 @@
 """
-news_fetcher.py
-Fetches fresh news (last 24-48 hrs) across all 5 content pillars:
-  1. RBI / Regulatory / NBFC
-  2. RCA / FMEA / Complaint Governance
-  3. Lean Six Sigma / Business Excellence
-  4. PMO / Change Management / GenAI in BFSI
-  5. RBI website direct scrape (authoritative source)
+news_fetcher.py - Parallel fetching + HBR articles + rotating fallbacks
 """
 
 import requests
+import feedparser
 from bs4 import BeautifulSoup
 from datetime import datetime, timedelta
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import config
 
-
-NEWS_QUERIES = {
-    "regulatory": [
-        "RBI India banking",
-        "NBFC India regulation",
-        "NBFC regulation RBI India",
-        "RBI inspection NBFC compliance",
-        "KFS key fact statement RBI",
-    ],
-    "rca_fmea": [
-        "root cause analysis banking India",
-        "FMEA process quality BFSI",
-        "complaint governance banking RBI",
-        "operational risk banking India",
-    ],
-    "lean_excellence": [
-        "Lean Six Sigma banking India",
-        "process excellence BFSI India",
-        "operational efficiency NBFC bank",
-        "Kaizen business transformation India",
-        "DMAIC process improvement banking",
-    ],
-    "pmo_genai": [
-        "GenAI banking India 2025",
-        "AI adoption BFSI India",
-        "digital transformation NBFC India",
-        "change management banking India",
-        "paperless banking RBI India",
-    ],
+# ── Harvard Business Review RSS Feeds ─────────────────────
+HBR_FEEDS = {
+    "ai":                 "https://hbr.org/rss/topic/ai",
+    "project_management": "https://hbr.org/rss/topic/project-management",
+    "technology":         "https://hbr.org/rss/topic/technology",
+    "leadership":         "https://hbr.org/rss/topic/leadership",
+    "operations":         "https://hbr.org/rss/topic/operations-strategy",
+    "change_management":  "https://hbr.org/rss/topic/change-management",
 }
 
+# ── MIT Sloan RSS (backup for HBR) ────────────────────────
+MIT_SLOAN_FEED = "https://sloanreview.mit.edu/rss/article/"
 
-# ─────────────────────────────────────────────────────────────
-# 1. NewsAPI
-# ─────────────────────────────────────────────────────────────
+# ── NewsAPI Queries ────────────────────────────────────────
+NEWS_QUERIES = {
+    "regulatory":         "RBI India banking regulation",
+    "rca_fmea":           "quality management banking India",
+    "lean_excellence":    "Lean Six Sigma India",
+    "pmo_genai":          "AI banking India",
+    "personal_excellence":"leadership banking India",
+    "industry_trends":    "Indian banking sector",
+    "any":                "RBI India banking",
+}
+
+# ── Rotating Fallback Topics (30 evergreen — never repeats) ──
+FALLBACK_ROTATION = [
+    {"title":"RBI's Fair Practice Code — Embedding Compliance into Operations","pillar":"regulatory"},
+    {"title":"Why Most Banks Fix Symptoms Instead of Root Causes","pillar":"rca_fmea"},
+    {"title":"DMAIC in Banking — Reducing TAT Without Adding Headcount","pillar":"lean_excellence"},
+    {"title":"GenAI Adoption in Indian BFSI — 2025 Update","pillar":"pmo_genai"},
+    {"title":"PPG Framework Governance — The Bajaj Finance Approach","pillar":"regulatory"},
+    {"title":"5 Whys in NBFC Complaint Resolution — A Practitioner Guide","pillar":"rca_fmea"},
+    {"title":"Kaizen Blitz Events — How Indian Banks Cut TAT by 40%","pillar":"lean_excellence"},
+    {"title":"PRINCE2 in BFSI — Making Projects Delivery-Ready","pillar":"pmo_genai"},
+    {"title":"KYC Compliance — Moving From Checklist to Customer Experience","pillar":"regulatory"},
+    {"title":"FMEA in Banking — Preventing Failures Before They Happen","pillar":"rca_fmea"},
+    {"title":"Value Stream Mapping in Loan Processing — Real Results","pillar":"lean_excellence"},
+    {"title":"AI-Powered Audit Readiness — The Future of NBFC Compliance","pillar":"pmo_genai"},
+    {"title":"RBI Inspection Readiness — 90 Days to Zero Observations","pillar":"regulatory"},
+    {"title":"Building India's First RCA Governance Unit in BFSI","pillar":"rca_fmea"},
+    {"title":"5S Implementation in Service Branches — Before and After","pillar":"lean_excellence"},
+    {"title":"Change Management in NBFC Digital Transformation","pillar":"pmo_genai"},
+    {"title":"NPA Prevention Through Early Warning Systems — RCA Approach","pillar":"rca_fmea"},
+    {"title":"SOP Lifecycle Governance — Beyond Documentation","pillar":"regulatory"},
+    {"title":"Lean Six Sigma Black Belt Projects in Indian Banking","pillar":"lean_excellence"},
+    {"title":"Board-Level Compliance Reporting — Making Data Tell a Story","pillar":"regulatory"},
+    {"title":"Customer Complaint Reduction — From 300 to Under 10 Monthly","pillar":"rca_fmea"},
+    {"title":"Business Continuity Planning — COVID Lessons for NBFC Leaders","pillar":"pmo_genai"},
+    {"title":"Process Reengineering in Loan Origination — A DMAIC Journey","pillar":"lean_excellence"},
+    {"title":"Digital KYC — Achieving 100% Paperless Sourcing","pillar":"pmo_genai"},
+    {"title":"Fishbone Analysis for EMI Debit Errors — Step by Step","pillar":"rca_fmea"},
+    {"title":"RBI's Revised NBFC Framework — What Compliance Teams Must Do","pillar":"regulatory"},
+    {"title":"Operational Excellence Awards — What Separates Winners","pillar":"lean_excellence"},
+    {"title":"GenAI for Compliance Monitoring — Practical BFSI Use Cases","pillar":"pmo_genai"},
+    {"title":"Zero Critical Audit Observations — A Framework That Works","pillar":"regulatory"},
+    {"title":"Mentoring Green Belt Projects — Lessons From 20+ Projects","pillar":"lean_excellence"},
+]
+
+_fallback_index = 0
+
+def get_next_fallback(pillar: str = None) -> dict:
+    """Get next fallback topic — rotates through 30 topics, never repeats."""
+    global _fallback_index
+    topics = FALLBACK_ROTATION
+    if pillar:
+        pillar_topics = [t for t in topics if t["pillar"] == pillar]
+        if pillar_topics:
+            topics = pillar_topics
+
+    topic = topics[_fallback_index % len(topics)]
+    _fallback_index += 1
+    return {
+        "title":       topic["title"],
+        "description": f"Deep-dive into {topic['title']}",
+        "source":      "Evergreen Topic",
+        "url":         "",
+        "pillar":      topic["pillar"],
+        "is_fallback": True,
+    }
+
+
+# ── Harvard Business Review Fetcher ───────────────────────
+
+def fetch_hbr_articles(topics: list = None, max_items: int = 3) -> list[dict]:
+    """
+    Fetch latest HBR articles on AI and project management.
+    Returns list of articles with title, summary, url, image_url.
+    """
+    if topics is None:
+        topics = ["ai", "project_management", "technology"]
+
+    articles = []
+    headers  = {"User-Agent": "Mozilla/5.0 (compatible; JayeshAgent/1.0)"}
+
+    for topic in topics:
+        feed_url = HBR_FEEDS.get(topic)
+        if not feed_url:
+            continue
+        try:
+            feed = feedparser.parse(feed_url)
+            for entry in feed.entries[:2]:
+                # Extract image from article page
+                image_url = _extract_hbr_image(entry.get("link",""), headers)
+
+                articles.append({
+                    "title":       entry.get("title",""),
+                    "description": entry.get("summary","")[:300],
+                    "url":         entry.get("link",""),
+                    "source":      "Harvard Business Review",
+                    "pillar":      "pmo_genai",
+                    "image_url":   image_url,
+                    "is_hbr":      True,
+                })
+                if len(articles) >= max_items:
+                    break
+        except Exception as e:
+            print(f"[HBR] {topic} error: {e}")
+
+        if len(articles) >= max_items:
+            break
+
+    print(f"[HBR] Fetched {len(articles)} articles")
+    return articles
+
+
+def _extract_hbr_image(url: str, headers: dict) -> str:
+    """Try to extract the main image from an HBR article page."""
+    if not url:
+        return ""
+    try:
+        resp = requests.get(url, headers=headers, timeout=8)
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # Try Open Graph image first (most reliable)
+        og_image = soup.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            return og_image["content"]
+
+        # Try article hero image
+        img = soup.find("img", class_=lambda c: c and "hero" in c.lower() if c else False)
+        if img and img.get("src"):
+            return img["src"]
+
+    except Exception as e:
+        print(f"[HBR] Image extract error: {e}")
+    return ""
+
+
+def fetch_mit_sloan(max_items: int = 2) -> list[dict]:
+    """Fetch MIT Sloan Management Review articles as HBR backup."""
+    articles = []
+    try:
+        feed = feedparser.parse(MIT_SLOAN_FEED)
+        for entry in feed.entries[:max_items]:
+            # Filter for AI/PM related articles
+            title = entry.get("title","").lower()
+            if any(kw in title for kw in ["ai","artificial","project","management","digital","technology","lean","agile"]):
+                articles.append({
+                    "title":       entry.get("title",""),
+                    "description": entry.get("summary","")[:300],
+                    "url":         entry.get("link",""),
+                    "source":      "MIT Sloan Management Review",
+                    "pillar":      "pmo_genai",
+                    "image_url":   "",
+                    "is_hbr":      True,
+                })
+    except Exception as e:
+        print(f"[MIT Sloan] Error: {e}")
+    return articles
+
+
+# ── NewsAPI Fetcher ────────────────────────────────────────
 
 def fetch_newsapi(pillar: str, max_articles: int = 4) -> list[dict]:
     if not config.NEWS_API_KEY:
         return []
-
-    queries   = NEWS_QUERIES.get(pillar, NEWS_QUERIES["regulatory"])
-    query_str = " OR ".join(q for q in queries[:3])
-    yesterday = (datetime.utcnow() - timedelta(days=2)).strftime("%Y-%m-%d")
-
+    query     = NEWS_QUERIES.get(pillar, "RBI India banking")
+    yesterday = (datetime.utcnow() - timedelta(days=3)).strftime("%Y-%m-%d")
     try:
         resp = requests.get(
             "https://newsapi.org/v2/everything",
             params={
-                "q":        query_str,
+                "q":        query,
                 "from":     yesterday,
                 "sortBy":   "relevancy",
                 "language": "en",
                 "pageSize": max_articles,
                 "apiKey":   config.NEWS_API_KEY,
             },
-            timeout=10,
+            timeout=8,
         )
         resp.raise_for_status()
-        articles = resp.json().get("articles", [])
+        articles = resp.json().get("articles",[])
         return [
             {
-                "title":       a.get("title", ""),
-                "description": a.get("description", ""),
-                "url":         a.get("url", ""),
-                "source":      a.get("source", {}).get("name", "NewsAPI"),
+                "title":       a.get("title",""),
+                "description": a.get("description",""),
+                "url":         a.get("url",""),
+                "source":      a.get("source",{}).get("name","NewsAPI"),
                 "pillar":      pillar,
+                "image_url":   a.get("urlToImage",""),
+                "is_hbr":      False,
             }
-            for a in articles if a.get("title") and "[Removed]" not in a.get("title", "")
+            for a in articles
+            if a.get("title") and "[Removed]" not in a.get("title","")
         ]
     except Exception as e:
         print(f"[NewsAPI] {pillar} error: {e}")
         return []
 
 
-# ─────────────────────────────────────────────────────────────
-# 2. RBI Website Scraper (always fresh)
-# ─────────────────────────────────────────────────────────────
+# ── RBI Scraper ────────────────────────────────────────────
 
 def fetch_rbi_website() -> list[dict]:
-    headers = {"User-Agent": "Mozilla/5.0 (compatible; JayeshAgent/1.0)"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     items   = []
-
     sources = [
-        ("https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx", "RBI Press Release"),
-        ("https://www.rbi.org.in/Scripts/BS_CircularIndexDisplay.aspx", "RBI Circular"),
+        ("https://www.rbi.org.in/Scripts/BS_PressReleaseDisplay.aspx","RBI Press Release"),
+        ("https://www.rbi.org.in/Scripts/BS_CircularIndexDisplay.aspx","RBI Circular"),
     ]
-
     for url, label in sources:
         try:
-            resp = requests.get(url, headers=headers, timeout=15)
-            soup = BeautifulSoup(resp.text, "html.parser")
-
-            rows = soup.select("table tr")
-            for row in rows[:15]:
+            resp = requests.get(url, headers=headers, timeout=12)
+            soup = BeautifulSoup(resp.text,"html.parser")
+            for row in soup.select("table tr")[:15]:
                 cells = row.find_all("td")
                 if len(cells) >= 2:
                     date_text  = cells[0].get_text(strip=True)
                     title_text = cells[1].get_text(strip=True)
                     link_tag   = cells[1].find("a")
-                    href = ""
-                    if link_tag and link_tag.get("href"):
-                        href = "https://www.rbi.org.in" + link_tag["href"]
-
+                    href = ("https://www.rbi.org.in"+link_tag["href"]) if link_tag and link_tag.get("href") else url
                     if title_text and len(title_text) > 15:
                         items.append({
                             "title":       title_text,
                             "description": f"{label} issued on {date_text}",
-                            "url":         href or url,
+                            "url":         href,
                             "source":      label,
                             "pillar":      "regulatory",
+                            "image_url":   "",
+                            "is_hbr":      False,
                         })
                     if len(items) >= 3:
                         break
         except Exception as e:
-            print(f"[RBI Scraper] {label}: {e}")
-
+            print(f"[RBI] {label}: {e}")
     return items
 
 
-# ─────────────────────────────────────────────────────────────
-# 3. Static Fallback Topics
-# ─────────────────────────────────────────────────────────────
+# ── PARALLEL Main Fetcher ──────────────────────────────────
 
-FALLBACK_TOPICS = {
-    "regulatory": {
-        "title":       "RBI's Fair Practice Code — What Every NBFC Must Know",
-        "description": "RBI's FPC directions mandate transparent communication, fair pricing, and grievance redressal across all NBFC products.",
-        "source":      "RBI Master Direction (Fallback)",
-        "url":         "https://www.rbi.org.in",
-        "pillar":      "regulatory",
-    },
-    "rca_fmea": {
-        "title":       "Why Most Banks Fix Symptoms Instead of Root Causes",
-        "description": "Without structured RCA frameworks like FMEA and 5 Whys, complaint recurrence remains high in BFSI operations.",
-        "source":      "Process Excellence (Fallback)",
-        "url":         "",
-        "pillar":      "rca_fmea",
-    },
-    "lean_excellence": {
-        "title":       "DMAIC in Banking — Reducing TAT Without Adding Headcount",
-        "description": "Lean Six Sigma's DMAIC methodology has been successfully applied to reduce loan processing TAT and operational costs in Indian banks.",
-        "source":      "Business Excellence (Fallback)",
-        "url":         "",
-        "pillar":      "lean_excellence",
-    },
-    "pmo_genai": {
-        "title":       "GenAI Adoption in Indian BFSI — Where Are We in 2025?",
-        "description": "Indian banks and NBFCs are piloting GenAI for customer service, compliance monitoring, and underwriting automation.",
-        "source":      "BFSI Technology (Fallback)",
-        "url":         "",
-        "pillar":      "pmo_genai",
-    },
-    "any": {
-        "title":       "Operational Excellence in BFSI — The Compliance-Quality Connect",
-        "description": "Best-in-class BFSI institutions are integrating compliance governance with operational excellence frameworks for sustainable performance.",
-        "source":      "BFSI Excellence (Fallback)",
-        "url":         "",
-        "pillar":      "regulatory",
-    },
-}
-
-
-# ─────────────────────────────────────────────────────────────
-# 4. Main entry point
-# ─────────────────────────────────────────────────────────────
-
-def get_news_for_pillar(pillar: str, recent_topics: list[str] = None) -> list[dict]:
+def get_news_for_pillar(
+    pillar: str,
+    recent_topics: list = None,
+    include_hbr: bool = False
+) -> list[dict]:
     """
-    Returns 4-6 fresh news items for a given pillar.
-    Filters out topics already covered recently.
+    Fetch news in PARALLEL for speed.
+    RBI scraper + NewsAPI run simultaneously.
+    Returns deduplicated list.
     """
     recent_topics = recent_topics or []
 
-    # Always get RBI for regulatory pillar
-    rbi_news  = fetch_rbi_website() if pillar in ("regulatory", "any") else []
-    api_news  = fetch_newsapi(pillar, max_articles=5)
+    # Run fetchers in parallel
+    results = {}
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {}
 
-    combined = rbi_news + api_news
+        if pillar in ("regulatory","any"):
+            futures[executor.submit(fetch_rbi_website)] = "rbi"
+
+        futures[executor.submit(fetch_newsapi, pillar, 5)] = "newsapi"
+
+        if include_hbr or pillar == "pmo_genai":
+            futures[executor.submit(fetch_hbr_articles, ["ai","project_management"])] = "hbr"
+
+        for future in as_completed(futures):
+            key = futures[future]
+            try:
+                results[key] = future.result()
+            except Exception as e:
+                print(f"[Fetch] {key} error: {e}")
+                results[key] = []
+
+    # Merge results — RBI first (most authoritative)
+    combined = (
+        results.get("rbi",[]) +
+        results.get("newsapi",[]) +
+        results.get("hbr",[])
+    )
 
     # Deduplicate
     seen, unique = set(), []
     for item in combined:
         key = item["title"].lower()[:50]
-        if key not in seen:
+        if key not in seen and item["title"]:
             seen.add(key)
             unique.append(item)
 
     # Filter recently used topics
     if recent_topics:
         filtered = [
-            item for item in unique
+            i for i in unique
             if not any(
-                rt in item["title"].lower()
+                rt in i["title"].lower()
                 for rt in recent_topics[:10]
                 if len(rt) > 6
             )
         ]
-        unique = filtered if filtered else unique  # fallback to unfiltered if all filtered out
+        unique = filtered if filtered else unique
 
-    # Add fallback if empty
+    # Fallback if still empty
     if not unique:
-        fallback = FALLBACK_TOPICS.get(pillar, FALLBACK_TOPICS["regulatory"])
-        unique   = [fallback]
-        print(f"[News] Using fallback for pillar: {pillar}")
+        unique = [get_next_fallback(pillar)]
+        print(f"[News] Using rotating fallback for pillar: {pillar}")
 
     print(f"[News] {len(unique)} items fetched for pillar: {pillar}")
     return unique[:6]
 
 
+def get_hbr_for_post() -> list[dict]:
+    """Dedicated function to get HBR articles for standalone HBR posts."""
+    articles = fetch_hbr_articles(
+        topics=["ai","project_management","technology","operations","change_management"],
+        max_items=4
+    )
+    if not articles:
+        articles = fetch_mit_sloan(max_items=3)
+    return articles
+
+
 if __name__ == "__main__":
-    for pillar in ["regulatory", "rca_fmea", "lean_excellence", "pmo_genai"]:
-        print(f"\n── {pillar.upper()} ──")
-        items = get_news_for_pillar(pillar)
-        for item in items:
-            print(f"  [{item['source']}] {item['title'][:70]}")
+    print("\n── HBR Articles ──")
+    for a in fetch_hbr_articles(["ai","project_management"], max_items=3):
+        print(f"  [{a['source']}] {a['title'][:70]}")
+        print(f"  Image: {a.get('image_url','none')[:60]}")
+
+    print("\n── Regulatory News ──")
+    for a in get_news_for_pillar("regulatory"):
+        print(f"  [{a['source']}] {a['title'][:70]}")
