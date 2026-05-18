@@ -94,44 +94,54 @@ def get_next_fallback(pillar: str = None) -> dict:
 
 def fetch_hbr_articles(topics: list = None, max_items: int = 3) -> list[dict]:
     """
-    Fetch latest HBR articles on AI and project management.
-    Returns list of articles with title, summary, url, image_url.
+    Fetch HBR-style articles on AI and project management.
+    Uses NewsAPI with trusted sources since HBR blocks direct RSS.
     """
-    if topics is None:
-        topics = ["ai", "project_management", "technology"]
+    if not config.NEWS_API_KEY:
+        return []
 
     articles = []
-    headers  = {"User-Agent": "Mozilla/5.0 (compatible; JayeshAgent/1.0)"}
+    queries  = [
+        "Harvard Business Review AI project management",
+        "artificial intelligence project management 2025",
+        "AI leadership digital transformation management",
+        "generative AI business strategy management",
+        "project management AI automation 2025",
+    ]
 
-    for topic in topics:
-        feed_url = HBR_FEEDS.get(topic)
-        if not feed_url:
-            continue
+    for query in queries:
         try:
-            feed = feedparser.parse(feed_url)
-            for entry in feed.entries[:2]:
-                # Extract image from article page
-                image_url = _extract_hbr_image(entry.get("link",""), headers)
-
-                articles.append({
-                    "title":       entry.get("title",""),
-                    "description": entry.get("summary","")[:300],
-                    "url":         entry.get("link",""),
-                    "source":      "Harvard Business Review",
-                    "pillar":      "pmo_genai",
-                    "image_url":   image_url,
-                    "is_hbr":      True,
-                })
-                if len(articles) >= max_items:
-                    break
+            resp = requests.get(
+                "https://newsapi.org/v2/everything",
+                params={
+                    "q":        query,
+                    "language": "en",
+                    "pageSize": 3,
+                    "sortBy":   "relevancy",
+                    "apiKey":   config.NEWS_API_KEY,
+                },
+                timeout=8,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("articles", [])
+            for a in items:
+                if a.get("title") and "[Removed]" not in a.get("title",""):
+                    articles.append({
+                        "title":       a.get("title",""),
+                        "description": a.get("description","")[:300],
+                        "url":         a.get("url",""),
+                        "source":      a.get("source",{}).get("name","Management Review"),
+                        "pillar":      "pmo_genai",
+                        "image_url":   a.get("urlToImage",""),
+                        "is_hbr":      True,
+                    })
+            if len(articles) >= max_items:
+                break
         except Exception as e:
-            print(f"[HBR] {topic} error: {e}")
+            print(f"[HBR/NewsAPI] {query[:30]} error: {e}")
 
-        if len(articles) >= max_items:
-            break
-
-    print(f"[HBR] Fetched {len(articles)} articles")
-    return articles
+    print(f"[HBR] Fetched {len(articles[:max_items])} articles")
+    return articles[:max_items]
 
 
 def _extract_hbr_image(url: str, headers: dict) -> str:

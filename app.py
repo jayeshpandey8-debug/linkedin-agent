@@ -25,6 +25,9 @@ import linkedin_api
 app     = Flask(__name__)
 IST     = pytz.timezone("Asia/Kolkata")
 
+# Force DB initialisation on every startup — creates missing tables
+store.init_db()
+
 # ─────────────────────────────────────────────────────────────
 # Scheduler Setup
 # ─────────────────────────────────────────────────────────────
