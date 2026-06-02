@@ -50,11 +50,9 @@ def run_daily_cycle():
     print(f"[Agent] Pillar: {pillar} | Format: {fmt}")
     recent_topics = store.get_recent_topics(limit=config.MEMORY_LOOKBACK_POSTS)
 
-    # Check if Thursday — include HBR for PMO/GenAI posts
-    today_dow  = datetime.now(IST).weekday()
+    today_dow   = datetime.now(IST).weekday()
     include_hbr = (pillar == "pmo_genai") or (today_dow == 3)
 
-    # Fetch news (parallel inside news_fetcher)
     news = news_fetcher.get_news_for_pillar(
         pillar,
         recent_topics=recent_topics,
@@ -66,7 +64,6 @@ def run_daily_cycle():
 
     _pending_news = news
 
-    # Generate post
     print("[Agent] Generating post via Claude...")
     try:
         post = post_generator.generate_post(
@@ -79,10 +76,9 @@ def run_daily_cycle():
         whatsapp.send_error_alert(f"Claude generation failed: {e}")
         return
 
-    # Save draft + set active post in DB
     post_id = store.save_draft(post)
     post["id"] = post_id
-    store.set_active_post(post_id)   # ← DB-persisted, survives restarts
+    store.set_active_post(post_id)
     store.update_status(
         post_id, "whatsapp_sent",
         sent_to_whatsapp_at=datetime.now().isoformat()
@@ -98,7 +94,6 @@ def generate_on_topic(topic: str):
     print(f"[Agent] Topic on demand: {topic}")
     whatsapp.send_topic_confirmation(topic)
 
-    # Check if topic is HBR/AI/PM related
     hbr_keywords = ["harvard","hbr","ai","artificial intelligence","project management",
                      "leadership","digital transformation","agile","strategy","innovation"]
     is_hbr_topic = any(kw in topic.lower() for kw in hbr_keywords)
@@ -110,7 +105,6 @@ def generate_on_topic(topic: str):
         news = news_fetcher.get_hbr_for_post()
 
     if not news:
-        # Search NewsAPI for the topic
         try:
             import requests, os
             resp = requests.get(
@@ -154,7 +148,6 @@ def generate_on_topic(topic: str):
 
     _pending_news = news
 
-    # Generate post
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
@@ -184,7 +177,6 @@ def generate_on_topic(topic: str):
         )
         post_text = response.content[0].text.strip()
 
-        # Add source URL
         for n in news:
             if n.get("url","").startswith("http"):
                 post_text += f"\n\n📌 Source: {n['url']}"
@@ -194,7 +186,6 @@ def generate_on_topic(topic: str):
         whatsapp.send_error_alert(f"Post generation failed: {e}")
         return
 
-    # Determine HBR image
     hbr_image = ""
     for n in news:
         if n.get("is_hbr") and n.get("image_url"):
@@ -225,6 +216,32 @@ def generate_on_topic(topic: str):
     whatsapp.send_draft_for_approval(post_id, post)
 
 
+def _get_pending_post_id() -> int:
+    """
+    FIXED: Always return the LATEST whatsapp_sent post.
+    Priority:
+      1. Latest post with status='whatsapp_sent' (most recently generated)
+      2. Active post ID from DB (fallback)
+    This prevents old stale posts from being approved instead of the new one.
+    """
+    # Always prefer the most recently sent WhatsApp draft
+    pending = store.get_latest_pending()
+    if pending:
+        post_id = pending["id"]
+        # Sync active post to match latest pending
+        store.set_active_post(post_id)
+        print(f"[Agent] Using latest pending post #{post_id}")
+        return post_id
+
+    # Fallback to active post tracking
+    post_id = store.get_active_post_id()
+    if post_id:
+        print(f"[Agent] Using active post #{post_id} from DB")
+        return post_id
+
+    return None
+
+
 def handle_whatsapp_reply(reply_text: str) -> str:
     global _pending_news
 
@@ -241,20 +258,16 @@ def handle_whatsapp_reply(reply_text: str) -> str:
         threading.Thread(target=generate_on_topic, args=(feedback,), daemon=True).start()
         return f"🔍 Got it! Writing about:\n_{feedback}_\n\nCheck WhatsApp in 60 seconds! ⏳"
 
-    # Get pending post — from DB first (survives restarts)
-    post_id = store.get_active_post_id()
+    # ── GET PENDING POST — ALWAYS USE LATEST ──────────────
+    post_id = _get_pending_post_id()
     if not post_id:
-        pending = store.get_latest_pending()
-        if pending:
-            post_id = pending["id"]
-        else:
-            return (
-                "No pending post found.\n\n"
-                "You can:\n"
-                "⚡ Use control panel to generate\n"
-                "📌 Send: TOPIC [your topic]\n"
-                "Example: TOPIC RBI Fair Practice Code"
-            )
+        return (
+            "No pending post found.\n\n"
+            "You can:\n"
+            "⚡ Use control panel to generate\n"
+            "📌 Send: TOPIC [your topic]\n"
+            "Example: TOPIC RBI Fair Practice Code"
+        )
 
     # ── APPROVE ────────────────────────────────────────────
     if action == "approve":
@@ -262,18 +275,17 @@ def handle_whatsapp_reply(reply_text: str) -> str:
         if not post:
             return "Post not found."
 
-        # Fetch image in parallel with LinkedIn auth
+        # Double-check we're posting the right post
+        print(f"[Agent] ✅ Approving post #{post_id}: {post.get('topic','')[:50]}")
+
         image_bytes = None
         if config.INCLUDE_IMAGE:
             try:
                 import image_fetcher
-                # Check for HBR article image first
                 hbr_image_url = post.get("hbr_image","")
                 if hbr_image_url:
                     print(f"[Agent] Using HBR article image...")
                     image_bytes = image_fetcher.download_image(hbr_image_url)
-
-                # Fall back to Pexels if no HBR image
                 if not image_bytes:
                     img = image_fetcher.get_image_for_post(
                         pillar=post.get("pillar","any"),
@@ -293,7 +305,7 @@ def handle_whatsapp_reply(reply_text: str) -> str:
 
         if result["success"]:
             store.update_status(post_id, "posted", linkedin_post_id=result["post_id"])
-            store.clear_active_post()   # ← Clear DB tracking
+            store.clear_active_post()
 
             def _reminder():
                 time.sleep(config.ENGAGEMENT_REMINDER_MINUTES * 60)
