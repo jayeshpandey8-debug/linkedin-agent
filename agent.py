@@ -167,11 +167,13 @@ def generate_on_topic(topic: str):
             messages=[{
                 "role": "user",
                 "content": (
-                    f"Author: {post_generator.PILLAR_CREDENTIALS['any'].strip()}\n"
                     f"Topic requested: {topic}\n"
-                    f"Format: Hook → 3-4 bullets ▶ → practitioner insight → question → 3-4 hashtags\n"
+                    f"Format: Hook → 3-4 bullets ▶ → plain-English implication → question → 3-4 hashtags\n"
                     f"News/Articles:\n{news_summary}"
-                    f"{hbr_note}\n\nWrite the post:"
+                    f"{hbr_note}\n\n"
+                    f"Write objective commentary on this topic. No personal achievements or "
+                    f"first-person experience claims. Simplest possible English, short sentences.\n\n"
+                    f"Write the post:"
                 )
             }],
         )
