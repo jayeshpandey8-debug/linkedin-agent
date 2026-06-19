@@ -161,7 +161,7 @@ def generate_on_topic(topic: str):
             hbr_note = "\nThis is based on a Harvard Business Review article. Reference HBR in your post and link it to Indian BFSI context."
 
         response = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=600,
             system=post_generator.BASE_SYSTEM,
             messages=[{
