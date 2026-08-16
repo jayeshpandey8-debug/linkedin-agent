@@ -12,6 +12,7 @@ Responsibilities:
 from flask import Flask, request, jsonify, render_template_string
 from twilio.twiml.messaging_response import MessagingResponse
 from apscheduler.schedulers.background import BackgroundScheduler
+from functools import wraps
 import atexit
 import pytz
 import os
@@ -28,6 +29,31 @@ IST = pytz.timezone("Asia/Kolkata")
 
 # Force DB initialisation on every startup
 store.init_db()
+
+
+# ─────────────────────────────────────────────────────────────
+# Auth guard — protects every admin/dashboard route.
+# config.DASHBOARD_SECRET existed before but was never actually checked
+# anywhere: every /api/* route (including /api/posts/<id>/approve, which
+# posts straight to LinkedIn) was reachable by anyone with the Railway URL.
+# Pass the secret as ?key=... or an X-Dashboard-Secret header.
+# ─────────────────────────────────────────────────────────────
+
+def _authorized() -> bool:
+    if not config.DASHBOARD_SECRET:
+        # Misconfigured — fail closed, not open.
+        return False
+    supplied = request.args.get("key") or request.headers.get("X-Dashboard-Secret", "")
+    return bool(supplied) and supplied == config.DASHBOARD_SECRET
+
+
+def require_secret(fn):
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        if not _authorized():
+            return jsonify({"error": "Unauthorized. Append ?key=YOUR_DASHBOARD_SECRET to the URL."}), 401
+        return fn(*args, **kwargs)
+    return wrapper
 
 # ─────────────────────────────────────────────────────────────
 # Scheduler Setup  (IST timezone enforced on ALL jobs)
@@ -145,6 +171,7 @@ def linkedin_callback():
 # ─────────────────────────────────────────────────────────────
 
 @app.route("/api/status")
+@require_secret
 def api_status():
     jobs = []
     for job in scheduler.get_jobs():
@@ -161,11 +188,13 @@ def api_status():
 
 
 @app.route("/api/posts")
+@require_secret
 def api_posts():
     return jsonify(store.get_all_posts(limit=50))
 
 
 @app.route("/api/generate", methods=["POST"])
+@require_secret
 def api_generate():
     """Manually trigger post generation — ignores schedule, always runs."""
     import threading
@@ -186,12 +215,14 @@ def api_generate():
 
 
 @app.route("/api/posts/<int:post_id>")
+@require_secret
 def api_get_post(post_id):
     post = store.get_post(post_id)
     return jsonify(post) if post else (jsonify({"error": "Not found"}), 404)
 
 
 @app.route("/api/test-whatsapp", methods=["POST"])
+@require_secret
 def api_test_whatsapp():
     result = whatsapp.send_message(
         "✅ *LinkedIn Agent Test*\n\nConnection confirmed! Agent is running. 🚀"
@@ -200,18 +231,23 @@ def api_test_whatsapp():
 
 
 @app.route("/api/posts/<int:post_id>/reject", methods=["GET", "POST"])
+@require_secret
 def api_reject_post(post_id):
     store.update_status(post_id, "rejected")
     return jsonify({"success": True, "message": f"Post #{post_id} marked as rejected."})
 
 
 @app.route("/api/posts/<int:post_id>/approve", methods=["GET", "POST"])
+@require_secret
 def api_approve_post(post_id):
+    # This posts directly to LinkedIn with NO WhatsApp confirmation step —
+    # it must stay behind the secret gate.
     result = agent.approve_and_post(post_id)
     return jsonify(result)
 
 
 @app.route("/api/cleanup", methods=["GET", "POST"])
+@require_secret
 def api_cleanup():
     posts   = store.get_all_posts(limit=50)
     cleaned = 0
@@ -224,6 +260,7 @@ def api_cleanup():
 
 
 @app.route("/api/weekly-summary", methods=["POST"])
+@require_secret
 def api_weekly_summary():
     agent.run_weekly_summary()
     return jsonify({"message": "Weekly summary sent to WhatsApp."})
@@ -234,8 +271,10 @@ def api_weekly_summary():
 # ─────────────────────────────────────────────────────────────
 
 @app.route("/")
+@require_secret
 def index():
-    return render_template_string(TRIGGER_HTML)
+    # Pass the key through so the page's own fetch() calls stay authorized.
+    return render_template_string(TRIGGER_HTML, secret_key=request.args.get("key", ""))
 
 
 TRIGGER_HTML = """
@@ -300,6 +339,10 @@ TRIGGER_HTML = """
         </div>
     </div>
     <script>
+        const SECRET_KEY = "{{ secret_key }}";
+        function withKey(path) {
+            return path + (path.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(SECRET_KEY);
+        }
         function showStatus(msg, type) {
             const el = document.getElementById('status');
             el.className = 'status ' + type;
@@ -308,7 +351,7 @@ TRIGGER_HTML = """
         async function generatePost() {
             showStatus('⏳ Generating post... Check WhatsApp in 60 seconds!', 'loading');
             try {
-                const r    = await fetch('/api/generate', { method: 'POST' });
+                const r    = await fetch(withKey('/api/generate'), { method: 'POST' });
                 const data = await r.json();
                 showStatus('✅ Done! Check WhatsApp for draft. Reply YES to post!', 'success');
             } catch(e) { showStatus('❌ Error: ' + e.message, 'error'); }
@@ -316,7 +359,7 @@ TRIGGER_HTML = """
         async function testWhatsapp() {
             showStatus('⏳ Sending test message...', 'loading');
             try {
-                const r    = await fetch('/api/test-whatsapp', { method: 'POST' });
+                const r    = await fetch(withKey('/api/test-whatsapp'), { method: 'POST' });
                 const data = await r.json();
                 if (data.success) { showStatus('✅ Test message sent! Check WhatsApp.', 'success'); }
                 else              { showStatus('❌ WhatsApp test failed.', 'error'); }
@@ -325,14 +368,14 @@ TRIGGER_HTML = """
         async function weeklySummary() {
             showStatus('⏳ Sending weekly summary...', 'loading');
             try {
-                await fetch('/api/weekly-summary', { method: 'POST' });
+                await fetch(withKey('/api/weekly-summary'), { method: 'POST' });
                 showStatus('✅ Weekly summary sent to WhatsApp!', 'success');
             } catch(e) { showStatus('❌ Error: ' + e.message, 'error'); }
         }
         async function checkStatus() {
             showStatus('⏳ Fetching scheduler status...', 'loading');
             try {
-                const r    = await fetch('/api/status');
+                const r    = await fetch(withKey('/api/status'));
                 const data = await r.json();
                 let msg = `🕐 <b>${data.time_ist}</b><br>`;
                 data.jobs.forEach(j => {

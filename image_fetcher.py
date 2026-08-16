@@ -13,11 +13,9 @@ PEXELS_API_KEY = config.PEXELS_API_KEY
 # ── Pillar base context (human-centric fallback only) ─────
 PILLAR_FALLBACK = {
     "regulatory":          "indian banking compliance professionals office",
-    "rca_fmea":            "quality team analysis professionals meeting",
-    "lean_excellence":     "process improvement team professionals india",
-    "pmo_genai":           "technology professionals AI india office",
-    "personal_excellence": "indian business leader professional confident",
-    "industry_trends":     "indian banking professionals conference meeting",
+    "ai_genai":            "technology professionals AI india office",
+    "pmp":                 "project management team professionals meeting",
+    "change_management":   "process improvement team professionals india",
     "any":                 "indian business professionals office meeting",
 }
 
@@ -297,12 +295,13 @@ def download_image(image_url: str) -> bytes | None:
 
 if __name__ == "__main__":
     tests = [
-        ("regulatory",     "RBI rejects NBFC funding norms tightening", "equity investments group entities public funds"),
-        ("rca_fmea",       "FMEA root cause analysis complaint reduction EMI", ""),
-        ("lean_excellence","DMAIC Lean Six Sigma process TAT reduction banking", ""),
-        ("pmo_genai",      "GenAI agentic AI startups incumbents BFSI", ""),
-        ("regulatory",     "Unclaimed deposits insurance mutual funds government portal", ""),
-        ("regulatory",     "RBI quantum safe cryptography banking Q-SAFE panel", ""),
+        ("regulatory",         "RBI rejects NBFC funding norms tightening", "equity investments group entities public funds"),
+        ("change_management",  "FMEA root cause analysis complaint reduction EMI", ""),
+        ("change_management",  "DMAIC Lean Six Sigma process TAT reduction banking", ""),
+        ("ai_genai",           "GenAI agentic AI startups incumbents BFSI", ""),
+        ("pmp",                "PMBOK stakeholder management project charter", ""),
+        ("regulatory",         "Unclaimed deposits insurance mutual funds government portal", ""),
+        ("regulatory",         "RBI quantum safe cryptography banking Q-SAFE panel", ""),
     ]
     for pillar, topic, text in tests:
         print(f"\n── {pillar.upper()} | {topic[:50]} ──")

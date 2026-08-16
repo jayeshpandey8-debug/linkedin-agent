@@ -51,7 +51,7 @@ def run_daily_cycle():
     recent_topics = store.get_recent_topics(limit=config.MEMORY_LOOKBACK_POSTS)
 
     today_dow   = datetime.now(IST).weekday()
-    include_hbr = (pillar == "pmo_genai") or (today_dow == 3)
+    include_hbr = (pillar in ("ai_genai", "pmp")) or (today_dow == 3)
 
     news = news_fetcher.get_news_for_pillar(
         pillar,
@@ -161,7 +161,7 @@ def generate_on_topic(topic: str):
             hbr_note = "\nThis is based on a Harvard Business Review article. Reference HBR in your post and link it to Indian BFSI context."
 
         response = client.messages.create(
-            model="claude-sonnet-4-6",
+            model=config.ANTHROPIC_MODEL,
             max_tokens=600,
             system=post_generator.BASE_SYSTEM,
             messages=[{
@@ -171,8 +171,9 @@ def generate_on_topic(topic: str):
                     f"Format: Hook → 3-4 bullets ▶ → plain-English implication → question → 3-4 hashtags\n"
                     f"News/Articles:\n{news_summary}"
                     f"{hbr_note}\n\n"
-                    f"Write objective commentary on this topic. No personal achievements or "
-                    f"first-person experience claims. Simplest possible English, short sentences.\n\n"
+                    f"Write commentary on this topic. One short first-person practitioner aside is "
+                    f"welcome (see PRACTITIONER context) — no achievement numbers or job titles. "
+                    f"Simplest possible English, short sentences.\n\n"
                     f"Write the post:"
                 )
             }],
@@ -196,7 +197,7 @@ def generate_on_topic(topic: str):
 
     post = {
         "post_text":    post_text,
-        "pillar":       "pmo_genai" if is_hbr_topic else "any",
+        "pillar":       "ai_genai" if is_hbr_topic else "any",
         "format":       "hbr_summary" if is_hbr_topic else "news_insight",
         "topic":        topic,
         "keywords_used":[topic],
@@ -215,6 +216,30 @@ def generate_on_topic(topic: str):
         post_id, "whatsapp_sent",
         sent_to_whatsapp_at=datetime.now().isoformat()
     )
+    whatsapp.send_draft_for_approval(post_id, post)
+
+
+def generate_from_user_draft(raw_text: str):
+    """
+    WhatsApp 'DRAFT ...' command — the user writes their own post text and this
+    only polishes grammar/flow/clarity via post_generator.polish_user_draft().
+    Does NOT fetch news, does NOT change the user's ideas, opinions, or facts.
+    """
+    print(f"[Agent] Polishing user draft ({len(raw_text)} chars)...")
+    try:
+        post = post_generator.polish_user_draft(raw_text)
+    except Exception as e:
+        whatsapp.send_error_alert(f"Draft polish failed: {e}")
+        return
+
+    post_id = store.save_draft(post)
+    post["id"] = post_id
+    store.set_active_post(post_id)
+    store.update_status(
+        post_id, "whatsapp_sent",
+        sent_to_whatsapp_at=datetime.now().isoformat()
+    )
+    print(f"[Agent] Polished draft #{post_id} saved. Sending to WhatsApp...")
     whatsapp.send_draft_for_approval(post_id, post)
 
 
@@ -253,6 +278,14 @@ def handle_whatsapp_reply(reply_text: str) -> str:
 
     print(f"[Agent] Reply: action={action}, feedback='{feedback}'")
 
+    # ── DRAFT — USER WRITES IT, AGENT ONLY POLISHES ENGLISH ─
+    if action == "draft":
+        if not feedback:
+            return "Send your draft after the word DRAFT.\nExample:\nDRAFT RBI's new NBFC circular sounds simple on paper but implementation is where it gets hard..."
+        threading.Thread(target=generate_from_user_draft, args=(feedback,), daemon=True).start()
+        whatsapp.send_draft_received()
+        return f"✍️ Got your draft! Polishing the English now — your ideas stay exactly as you wrote them."
+
     # ── TOPIC ON DEMAND ────────────────────────────────────
     if action == "topic":
         if not feedback:
@@ -268,6 +301,7 @@ def handle_whatsapp_reply(reply_text: str) -> str:
             "You can:\n"
             "⚡ Use control panel to generate\n"
             "📌 Send: TOPIC [your topic]\n"
+            "✍️ Send: DRAFT [your own text] — I'll polish the English\n"
             "Example: TOPIC RBI Fair Practice Code"
         )
 
@@ -381,7 +415,8 @@ def handle_whatsapp_reply(reply_text: str) -> str:
             "✏️ *EDIT [feedback]*\n"
             "🔄 *REDO* — Regenerate\n"
             "❌ *NO* — Skip\n"
-            "📌 *TOPIC [topic]* — Write about specific topic\n\n"
+            "📌 *TOPIC [topic]* — Write about specific topic\n"
+            "✍️ *DRAFT [your text]* — Write it yourself, I'll polish the English\n\n"
             "Example: TOPIC Harvard AI project management article"
         )
 

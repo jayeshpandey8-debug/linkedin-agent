@@ -1,9 +1,13 @@
 """
-post_generator.py - Token-optimised, objective news commentary (no resume/credentials injected)
-40% fewer tokens, same quality output.
+post_generator.py - Token-optimised practitioner commentary (subtle first-person voice,
+no resume/achievement-stat dumping).
 UPDATED: enforced layman English — short words, short sentences, no jargon.
-UPDATED: removed personal resume/achievement stats from prompts — posts are now
-         objective news commentary, not personal-brag framed.
+UPDATED: voice allows occasional first-person practitioner asides ("what I've seen
+         in NBFC compliance...") grounded in config.PRACTITIONER_CONTEXT, but still
+         never lists specific achievement numbers, job titles, or a resume recap.
+UPDATED: added polish_user_draft() — takes the user's OWN rough text (via the
+         WhatsApp "DRAFT ..." command) and only cleans up grammar/flow/simplicity,
+         without changing the ideas, facts, or opinions in it.
 """
 
 import anthropic
@@ -27,11 +31,15 @@ FORMAT_PROMPTS = {
 }
 
 # ── Core system prompt (compressed) ───────────────────────
-# UPDATED: no resume/credentials, no "practitioner" framing, no personal achievement
-# numbers. Posts are objective commentary on the article itself.
-BASE_SYSTEM = """You are a LinkedIn content strategist with 25 years digital/SEO experience.
-Writing objective, informative LinkedIn posts about RBI/BFSI regulation, project
-management (PMI/PMP), Lean Six Sigma, RCA/FMEA, and world AI developments.
+# UPDATED: allows a SUBTLE first-person practitioner aside — not a full personal
+# essay, not a resume recap. Most of the post is still objective commentary on
+# the article; one line of practitioner opinion is welcome, not mandatory.
+BASE_SYSTEM = f"""You are a LinkedIn content strategist with 25 years digital/SEO experience,
+ghostwriting for a working practitioner (see PRACTITIONER below).
+Writing informative LinkedIn posts about RBI/BFSI regulation, project management (PMI/PMP),
+change management (incl. Lean Six Sigma, RCA/FMEA), and world AI developments.
+
+PRACTITIONER: {config.PRACTITIONER_CONTEXT}
 
 STRICT RULES:
 1. Max 200 words. EXTREMELY SIMPLE ENGLISH — write like you're explaining to a smart
@@ -55,22 +63,28 @@ STRICT RULES:
    "underscore", "underpin", "augment", "optimise/optimize" (use "improve" or "make better"),
    "streamline" (use "simplify" or "make faster"), "myriad", "plethora", "nuanced", "multifaceted".
 4. Diplomatic — never criticise RBI, banks, government, or institutions negatively.
-5. No opinion/political bias. Facts + plain implications only.
+5. No political bias. You MAY share a practitioner's point of view on non-political,
+   non-institutional matters (e.g. how change management plays out in practice, whether
+   an AI trend is overhyped) — but never wade into RBI/government criticism or politics.
 6. For AI pros/cons content — give a balanced view: real benefits AND real risks/limits,
    explained simply, no hype words on either side.
-7. NEVER mention personal achievements, career history, job titles, certifications,
-   team sizes, percentage improvements from past projects, or any first-person
-   "I did X" claims. This is OBJECTIVE NEWS COMMENTARY, not a personal brag post.
-   Do not say "in my experience" or "I've seen" or "we achieved".
-8. Never start with "I". Start with hook (data, question, or fact from the article).
+7. VOICE: mostly write as an informed industry commentator explaining the news. You MAY
+   include ONE short first-person aside per post — a practitioner's take grounded in the
+   PRACTITIONER context above (e.g. "In my experience, this is where compliance teams
+   trip up" or "I've seen this exact problem in NBFC operations"). Keep it to one
+   sentence, not the whole post. Do NOT list specific numbers, percentages, rupee
+   figures, job titles, team sizes, or company names from a resume — that reads as
+   bragging, not insight. If in doubt, leave the first-person aside out rather than
+   force it.
+8. Start with a hook (data, question, fact, or — occasionally — a short first-person
+   observation). Don't open with "I" more than roughly one post in three.
 9. End with ONE specific engagement question, written simply, addressed to the reader
-   in general (e.g. "What does your organisation do about this?"), not from a personal
-   experience angle.
+   (e.g. "What does your organisation do about this?").
 10. 3-5 hashtags at end. Never more.
 11. Banned phrases: "In today's world", "As we navigate", "Exciting times", "Game changer",
     "In the ever-evolving landscape", "It goes without saying".
-12. Write like an informed industry commentator explaining the news, not a personal
-    success story.
+12. The post should read like an experienced practitioner commenting on the news, not
+    a press release and not a personal success story. One aside, not a memoir.
 13. Weave 1-2 SEO keywords naturally: Fair Practice Code, NBFC compliance, RBI regulation,
     PPG framework, RCA, FMEA, Lean Six Sigma, DMAIC, operational excellence, GenAI, PMI, PMP.
     Keep these as proper nouns/official terms — simplify everything ELSE around them.
@@ -104,7 +118,7 @@ def generate_post(
     fmt:            str,
     recent_topics:  list = None,
 ) -> dict:
-    """Generate LinkedIn post — objective commentary, no resume injection."""
+    """Generate LinkedIn post — practitioner commentary, subtle first-person aside allowed."""
     recent_topics = recent_topics or []
     hashtags      = select_hashtags(pillar)
 
@@ -125,13 +139,14 @@ def generate_post(
         f"Hashtags to include: {' '.join(hashtags)}\n"
         f"Recent topics (avoid repeating): {', '.join(recent_topics[:5])}\n\n"
         f"News/Article:\n{news_summary}\n\n"
-        f"Write objective commentary on this article. No personal achievements or "
-        f"first-person experience claims. Simplest possible English, short sentences. "
+        f"Write commentary on this article. One short first-person practitioner aside is "
+        f"welcome (see PRACTITIONER context) — no achievement numbers or job titles. "
+        f"Simplest possible English, short sentences. "
         f"Write the post:"
     )
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=config.ANTHROPIC_MODEL,
         max_tokens=600,
         system=BASE_SYSTEM,
         messages=[{"role":"user","content":user_prompt}],
@@ -164,7 +179,7 @@ def regenerate_post(
     fmt:        str,
     feedback:   str = "",
 ) -> dict:
-    """Regenerate with feedback — objective commentary, no resume injection."""
+    """Regenerate with feedback — practitioner commentary, subtle first-person aside allowed."""
     hashtags     = select_hashtags(pillar)
     news_summary = "\n".join([f"- {n['title']}" for n in news_items[:3]])
 
@@ -175,13 +190,14 @@ def regenerate_post(
         f"Hashtags: {' '.join(hashtags)}\n"
         f"News:\n{news_summary}"
         f"{feedback_note}\n\n"
-        f"Write objective commentary on this article. No personal achievements or "
-        f"first-person experience claims. Simplest possible English, short sentences. "
+        f"Write commentary on this article. One short first-person practitioner aside is "
+        f"welcome (see PRACTITIONER context) — no achievement numbers or job titles. "
+        f"Simplest possible English, short sentences. "
         f"Write the post:"
     )
 
     response = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=config.ANTHROPIC_MODEL,
         max_tokens=600,
         system=BASE_SYSTEM,
         messages=[{"role":"user","content":user_prompt}],
@@ -200,6 +216,74 @@ def regenerate_post(
         "generated_at": datetime.now().isoformat(),
         "status":       "draft",
         "feedback":     feedback,
+    }
+
+
+# ── Polish-only path — used by the WhatsApp "DRAFT ..." command ──────────
+# Distinct from generate_post/regenerate_post: takes the user's OWN written
+# text and does NOT fetch news, does NOT invent facts, does NOT change the
+# author's ideas or opinions. Grammar/flow/clarity only.
+POLISH_SYSTEM = """You are a copy editor for LinkedIn posts. You will be given a rough
+draft written by the author themselves — their own words, ideas, and opinions.
+
+YOUR ONLY JOB: improve grammar, flow, clarity, and simplicity. Do NOT:
+- Change the meaning, facts, or opinions expressed
+- Add new claims, statistics, or examples that aren't in the original
+- Remove the author's personal voice or first-person opinions — they are intentional
+- Restructure into a different format unless the original is very hard to follow
+- Add achievement stats, job titles, or credentials not already in the draft
+
+You MAY:
+- Fix grammar and awkward phrasing
+- Simplify complex sentences (aim for short sentences, plain English, a smart
+  12-year-old could follow it)
+- Replace jargon/corporate buzzwords with plain words, unless they are official
+  terms (RBI, NBFC, KYC, DMAIC, FMEA, PMP, etc.)
+- Tighten repetition
+- Add 3-5 relevant hashtags at the end if the draft doesn't already have them
+- Add ONE engagement question at the end if the draft doesn't already end with one
+
+BANNED WORDS (replace if present): "leverage", "synergy", "holistic", "robust",
+"facilitate", "utilize/utilise", "seamless", "cutting-edge", "best-in-class",
+"streamline", "myriad", "plethora", "nuanced", "multifaceted".
+
+Diplomatic — never introduce criticism of RBI, banks, government, or institutions
+that wasn't already clearly there in the original draft.
+
+Output ONLY the polished post text. No preamble, no explanation of what you changed."""
+
+
+def polish_user_draft(raw_text: str, pillar: str = "any") -> dict:
+    """
+    Polish the user's OWN rough text (WhatsApp 'DRAFT ...' command).
+    Grammar/flow/clarity only — no news fetch, no new facts, ideas untouched.
+    """
+    hashtags = select_hashtags(pillar)
+
+    user_prompt = (
+        f"Here is my rough draft for a LinkedIn post. Polish the English only — "
+        f"keep my ideas, opinions, and structure intact:\n\n{raw_text}"
+    )
+
+    response = client.messages.create(
+        model=config.ANTHROPIC_MODEL,
+        max_tokens=600,
+        system=POLISH_SYSTEM,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    post_text = response.content[0].text.strip()
+
+    return {
+        "post_text":     post_text,
+        "pillar":        pillar,
+        "format":        "user_draft",
+        "topic":         raw_text[:60],
+        "keywords_used": [],
+        "hashtags_used": hashtags,
+        "sources":       ["User Draft"],
+        "generated_at":  datetime.now().isoformat(),
+        "status":        "draft",
     }
 
 

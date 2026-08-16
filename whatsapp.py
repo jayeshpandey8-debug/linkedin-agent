@@ -39,8 +39,8 @@ def _split_message(body: str) -> list:
 
 def send_draft_for_approval(post_id: int, post: dict) -> bool:
     pillar_emoji = {
-        "regulatory":"📋","rca_fmea":"🔍",
-        "lean_excellence":"⚙️","pmo_genai":"🤖","any":"💡"
+        "regulatory":"📋","ai_genai":"🤖",
+        "pmp":"📈","change_management":"⚙️","any":"💡"
     }
     fmt_label = {
         "news_insight":"News + Insight","did_you_know":"Did You Know?",
@@ -74,7 +74,8 @@ def send_draft_for_approval(post_id: int, post: dict) -> bool:
         f"✏️ *EDIT [feedback]*\n"
         f"🔄 *REDO* — Regenerate\n"
         f"❌ *NO* — Skip\n"
-        f"📌 *TOPIC [topic]* — New topic"
+        f"📌 *TOPIC [topic]* — New topic\n"
+        f"✍️ *DRAFT [your text]* — Write it yourself, I'll polish the English"
     )
 
     send_message(part1)
@@ -110,9 +111,22 @@ def send_topic_confirmation(topic: str) -> bool:
         f"Check WhatsApp in 60 seconds! ⏳"
     )
 
+def send_draft_received() -> bool:
+    return send_message(
+        f"✍️ *DRAFT RECEIVED*\n\n"
+        f"Polishing your English — keeping your ideas and opinions exactly as you wrote them.\n"
+        f"Check WhatsApp in 30 seconds! ⏳"
+    )
+
 def parse_reply(reply_text: str) -> dict:
     text     = reply_text.strip().upper()
     original = reply_text.strip()
+
+    # DRAFT <your own text> — user writes it, agent polishes the English only.
+    # Checked before TOPIC/WRITE/ABOUT since it's a distinct flow (no news fetch).
+    if original.upper().startswith("DRAFT"):
+        raw = original[5:].strip().lstrip(":").strip()
+        return {"action":"draft","feedback":raw}
 
     # TOPIC / WRITE / ABOUT commands
     for cmd in ["TOPIC","WRITE","ABOUT"]:

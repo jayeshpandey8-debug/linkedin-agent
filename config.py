@@ -8,6 +8,9 @@ load_dotenv()
 
 # ── API Keys ───────────────────────────────────────────────
 ANTHROPIC_API_KEY      = os.getenv("ANTHROPIC_API_KEY", "")
+# Centralised here so a future model deprecation is a one-line env var change
+# instead of a repo-wide sed (this broke production once already).
+ANTHROPIC_MODEL        = os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
 NEWS_API_KEY           = os.getenv("NEWS_API_KEY", "")
 PEXELS_API_KEY         = os.getenv("PEXELS_API_KEY", "")
 INCLUDE_IMAGE          = os.getenv("INCLUDE_IMAGE", "true").lower() == "true"
@@ -29,16 +32,17 @@ DASHBOARD_PORT         = int(os.getenv("DASHBOARD_PORT", "5000"))
 DASHBOARD_SECRET       = os.getenv("DASHBOARD_SECRET", "jayesh_agent_secret_2025")
 AUTO_POST              = False
 
-# ── Posting Schedule (IST, day: hour/minute) ──────────────
+# ── Posting Schedule (IST, day: hour/minute) ───────────────
+# REBUILT FRESH — Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6
 import pytz
 IST = pytz.timezone("Asia/Kolkata")
 
 POSTING_SCHEDULE = {
-    0: {"hour": 8,  "minute": 30},   # Monday
-    1: {"hour": 12, "minute": 0},    # Tuesday
-    2: {"hour": 8,  "minute": 30},   # Wednesday
-    3: {"hour": 12, "minute": 0},    # Thursday
-    5: {"hour": 10, "minute": 0},    # Saturday
+    0: {"hour": 8,  "minute": 30},   # Monday    08:30 IST — RBI Circulars
+    1: {"hour": 12, "minute": 0},    # Tuesday   12:00 IST — AI / GenAI
+    2: {"hour": 8,  "minute": 30},   # Wednesday 08:30 IST — Change Management
+    3: {"hour": 12, "minute": 0},    # Thursday  12:00 IST — PMP / Project Mgmt
+    5: {"hour": 10, "minute": 0},    # Saturday  10:00 IST — AI / GenAI (personal story)
 }
 WEEKLY_SUMMARY_DAY    = 6
 WEEKLY_SUMMARY_HOUR   = 9
@@ -46,56 +50,52 @@ WEEKLY_SUMMARY_MINUTE = 0
 ENGAGEMENT_REMINDER_MINUTES = 30
 
 # ── Content Rotation ───────────────────────────────────────
+# REBUILT: focused on 4 pillars — RBI Circulars, AI/GenAI, PMP, Change Management.
+# RCA/FMEA + Lean Six Sigma are folded into "change_management" (they're the tools
+# of change management, not a separate topic). Industry trends / personal
+# excellence pillars removed — still reachable anytime via WhatsApp "TOPIC ...".
 CONTENT_ROTATION = {
-    0: ("regulatory",     "news_insight"),
-    1: ("rca_fmea",       "did_you_know"),
-    2: ("lean_excellence","dmaic_case"),
-    3: ("any",            "poll"),
-    5: ("pmo_genai",      "personal_story"),
+    0: ("regulatory",        "news_insight"),
+    1: ("ai_genai",          "did_you_know"),
+    2: ("change_management", "dmaic_case"),
+    3: ("pmp",               "poll"),
+    5: ("ai_genai",          "personal_story"),
 }
 
-# ── EXPANDED Topic Pillars ─────────────────────────────────
+# ── Topic Pillars ────────────────────────────────────────────
 PILLARS = {
+    # Anchored to actual RBI publications/circulars and India Government
+    # BFSI policy + execution, not generic banking news
     "regulatory": (
-        "RBI Regulation, Fair Practice Code, NBFC Compliance, KYC, PPG Frameworks, "
-        "RBI Inspection Readiness, Master Directions, NBFC SBR, KFS, Ombudsman, "
-        "RBI Circular, Banking Regulation, Credit Policy, Monetary Policy, "
-        "SEBI, IRDAI, NHB, Financial Inclusion, Priority Sector Lending"
+        "RBI Master Directions, RBI Circulars, RBI Press Releases, RBI Notifications, "
+        "Fair Practice Code, NBFC Compliance, KYC, PPG Frameworks, "
+        "RBI Inspection Readiness, NBFC SBR Framework, KFS, RBI Ombudsman Scheme, "
+        "Ministry of Finance BFSI Policy, India Government Financial Sector Reforms, "
+        "Budget Announcements for BFSI, Policy Execution and Implementation Timelines, "
+        "SEBI, IRDAI, NHB Regulations, Financial Inclusion Policy, Priority Sector Lending Targets"
     ),
-    "rca_fmea": (
-        "Root Cause Analysis, FMEA, 5 Whys, Fishbone Analysis, "
-        "Complaint Governance, Systemic Risk Elimination, Pareto Analysis, "
-        "Control Charts, Process Failure Modes, Defect Prevention, "
-        "Quality Circles, Error Proofing, Poka Yoke, CAPA, "
-        "Customer Complaint Resolution, NPS, Service Recovery"
+    # World AI/GenAI developments — separated out from PMP so AI gets its own voice
+    "ai_genai": (
+        "World AI Developments, Generative AI Trends Worldwide, Global AI Regulation, "
+        "AI Pros and Cons, AI Job Displacement Debate, AI Safety and Ethics, "
+        "Frontier AI Models, AI Adoption Risks and Benefits, GenAI in BFSI, "
+        "AI Agents, AI in Financial Services, Responsible AI, AI Governance"
     ),
-    "lean_excellence": (
-        "Lean Six Sigma, DMAIC, Kaizen, 5S, Business Excellence, "
-        "Process Reengineering, TAT Reduction, Operational Efficiency, "
-        "Value Stream Mapping, Blitz Events, Waste Elimination, "
-        "Throughput, Cycle Time, First Time Right, Cost of Quality, "
-        "Benchmarking, Balanced Scorecard, OKRs, KPIs, SLA Management"
+    # PMI/PMP project management practice — separated out from AI
+    "pmp": (
+        "PMI Project Management Practices, PMP Methodology, PMBOK Guide, "
+        "PRINCE2, Program Governance, Stakeholder Management, Risk Register, "
+        "Agile vs Waterfall, Earned Value Management, Project Charter, "
+        "Project Governance, Program Management Office, Portfolio Management"
     ),
-    "pmo_genai": (
-        "PMO Leadership, PRINCE2, SOP Governance, Change Management, "
-        "GenAI in BFSI, Digital Transformation, Audit Readiness, "
-        "AI Adoption Banking, Automation, Paperless Operations, "
-        "Program Governance, Stakeholder Management, Board Reporting, "
-        "Business Continuity, Risk Framework, CMMI, Agile, Waterfall"
-    ),
-    "personal_excellence": (
-        "Leadership, Executive Presence, Strategic Thinking, "
-        "Career Growth, Professional Development, Mentoring, "
-        "Team Building, Emotional Intelligence, Communication, "
-        "Work Life Balance, Productivity, Time Management, "
-        "IIT Kanpur AI Program, MBA Finance, Certifications"
-    ),
-    "industry_trends": (
-        "Indian Economy, BFSI Outlook, Credit Growth, NPA Trends, "
-        "Banking Sector Performance, NBFC Industry News, "
-        "Fintech Disruption, Open Banking, UPI, Digital Rupee, "
-        "Financial Inclusion India, Microfinance, Gold Loan, "
-        "Green Finance, ESG Banking, Sustainable Finance India"
+    # Change Management — now the home for RCA/FMEA + Lean Six Sigma, since
+    # those are the practitioner tools used to actually execute change
+    "change_management": (
+        "Change Management, SOP Governance, Business Continuity, Process Reengineering, "
+        "Root Cause Analysis, FMEA, 5 Whys, Fishbone Analysis, Complaint Governance, "
+        "Lean Six Sigma, DMAIC, Kaizen, 5S, TAT Reduction, Operational Efficiency, "
+        "Value Stream Mapping, Waste Elimination, Cost of Quality, CAPA, "
+        "Organisational Change, Adoption and Resistance to Change"
     ),
     "any": (
         "Any of the above pillars — pick the most trending topic today"
@@ -104,43 +104,39 @@ PILLARS = {
 
 # ── Expanded News Queries ──────────────────────────────────
 NEWS_QUERIES = {
+    # SHARPENED: targets actual RBI circulars/publications + Govt BFSI policy execution
     "regulatory": [
-        "RBI India banking regulation",
-        "NBFC compliance India",
-        "RBI circular directive India",
-        "fair practice code India banking",
-        "RBI monetary policy India",
-        "banking regulation SEBI India",
+        "RBI master direction circular",
+        "RBI notification NBFC",
+        "RBI press release banking",
+        "Ministry of Finance BFSI policy India",
+        "India government financial sector reform",
+        "RBI policy implementation NBFC",
     ],
-    "rca_fmea": [
-        "quality management banking India",
-        "operational risk BFSI India",
-        "customer complaint banking India",
-        "process quality improvement India",
+    # AI/GenAI — world developments, kept distinct from PMP
+    "ai_genai": [
+        "artificial intelligence pros cons",
+        "AI regulation world global",
+        "AI risks benefits debate 2026",
+        "generative AI adoption enterprise",
+        "AI agents enterprise 2026",
+        "responsible AI governance",
     ],
-    "lean_excellence": [
+    # PMI/PMP practice — kept distinct from AI
+    "pmp": [
+        "PMI project management methodology",
+        "PMP project management practice",
+        "PMBOK agile waterfall project",
+        "program governance stakeholder management",
+    ],
+    # Change Management — now covers RCA/FMEA + Lean Six Sigma + change execution
+    "change_management": [
+        "change management India",
         "Lean Six Sigma India",
         "operational excellence India",
         "process improvement BFSI India",
-        "business excellence India",
-    ],
-    "pmo_genai": [
-        "AI banking India 2025",
-        "digital transformation India BFSI",
-        "fintech India innovation",
-        "automation banking India",
-    ],
-    "personal_excellence": [
-        "leadership banking India",
-        "professional development finance India",
-        "career banking NBFC India",
-    ],
-    "industry_trends": [
-        "Indian banking sector news",
-        "NBFC industry India",
-        "credit growth India banking",
-        "fintech India news",
-        "UPI digital payments India",
+        "quality management banking India",
+        "root cause analysis banking",
     ],
     "any": [
         "RBI India banking",
@@ -149,14 +145,12 @@ NEWS_QUERIES = {
     ],
 }
 
-# ── Expanded Hashtag Bank ──────────────────────────────────
+# ── Hashtag Bank ─────────────────────────────────────────────
 HASHTAG_BANK = {
     "regulatory":         ["#NBFCCompliance","#RBIRegulation","#FairPracticeCode","#RegulatoryGovernance","#IndianBanking","#BFSI","#KYC","#RBICircular"],
-    "rca_fmea":           ["#RootCauseAnalysis","#FMEA","#ComplaintGovernance","#QualityManagement","#RiskMitigation","#ProcessControl","#5Whys","#ServiceExcellence"],
-    "lean_excellence":    ["#LeanSixSigma","#SixSigma","#DMAIC","#Kaizen","#5S","#OperationalExcellence","#BusinessExcellence","#ContinuousImprovement","#ProcessReengineering"],
-    "pmo_genai":          ["#ProjectManagement","#PMO","#PRINCE2","#ChangeManagement","#GenAI","#AIinBFSI","#DigitalTransformation","#Automation","#FutureOfFinance"],
-    "personal_excellence":["#Leadership","#CareerGrowth","#ProfessionalDevelopment","#ExecutivePresence","#Mentoring","#GrowthMindset"],
-    "industry_trends":    ["#IndianBanking","#BFSI","#Fintech","#CreditGrowth","#DigitalIndia","#FinancialInclusion","#UPI","#NBFC"],
+    "ai_genai":           ["#ArtificialIntelligence","#GenAI","#AIRegulation","#FutureOfWork","#ResponsibleAI","#AIGovernance"],
+    "pmp":                ["#PMI","#PMP","#ProjectManagement","#PMO","#PRINCE2","#AgileVsWaterfall"],
+    "change_management":  ["#ChangeManagement","#RootCauseAnalysis","#FMEA","#LeanSixSigma","#DMAIC","#Kaizen","#OperationalExcellence","#ProcessReengineering"],
     "always":             ["#BajajFinance","#StrategicExecution","#TransformationLeadership","#IndianFinance"],
 }
 
@@ -170,7 +164,19 @@ FORMATS = {
     "rca_tip":         "RCA/FMEA Practitioner Tip",
 }
 
-# ── Author Profile ─────────────────────────────────────────
+# ── Practitioner Context (trimmed) ─────────────────────────
+# Used to ground first-person "subtle aside" voice in post_generator.py.
+# Deliberately excludes specific stats/numbers so posts don't read as a
+# resume dump — role + domain only, so opinions sound authentic without bragging.
+PRACTITIONER_CONTEXT = (
+    "The author leads Fair Practice Code and regulatory governance for an NBFC "
+    "in India, with 15+ years across banking operations, compliance, and process "
+    "transformation. Background includes RCA/root-cause governance, Lean Six Sigma, "
+    "PMO/project delivery, and hands-on GenAI adoption work. Writes as a working "
+    "practitioner in this space, not an outside commentator."
+)
+
+# ── Author Profile (full — reserved for personal_story format only) ────────
 AUTHOR_PROFILE = """
 FULL NAME: Jayesh Taradutt Pandey
 CURRENT ROLE: Deputy National Lead – Fair Practice Code (FPC) Unit, Bajaj Finance Limited
@@ -215,25 +221,28 @@ CORE EXPERTISE:
 - Fair Practice Code & PPG Framework Governance
 - Root Cause Analysis (RCA), FMEA, 5 Whys, Fishbone Analysis
 - Lean Six Sigma (DMAIC, Kaizen, Blitz, 5S)
-- Program & PMO Leadership (PRINCE2)
+- Program & PMO Leadership (PRINCE2, PMI/PMP practices)
 - SOP Lifecycle Governance
 - Complaint Governance & Customer Fairness
-- GenAI Adoption in BFSI
+- GenAI Adoption in BFSI and World AI Trends
 - Change Management & Operational Transformation
 - Regulatory Inspection Readiness & Audit Coordination
 - Business Continuity Planning
 
 SEO KEYWORDS:
-Fair Practice Code, NBFC compliance, RBI regulation, PPG framework, root cause analysis,
-FMEA, Lean Six Sigma, DMAIC, operational excellence, process reengineering, complaint governance,
-KFS compliance, regulatory governance, audit readiness, change management, GenAI BFSI,
+Fair Practice Code, NBFC compliance, RBI regulation, RBI circular, RBI master direction,
+PPG framework, root cause analysis, FMEA, Lean Six Sigma, DMAIC, operational excellence,
+process reengineering, complaint governance, KFS compliance, regulatory governance,
+audit readiness, change management, GenAI, PMI, PMP, PMBOK, project management,
 business excellence, Six Sigma Black Belt, PMO leadership, RCA governance, Kaizen, 5S,
-NPA management, credit risk, KYC compliance, digital transformation banking
+NPA management, credit risk, KYC compliance, digital transformation banking, AI regulation,
+artificial intelligence pros and cons, India government BFSI policy
 
 TONE RULES:
 - Layman language — Class 10 readability
-- Diplomatic — never criticise RBI, banks, or institutions negatively
+- Diplomatic — never criticise RBI, banks, government, or institutions negatively
 - No personal opinion or political bias — facts + practitioner implications only
+- For AI pros/cons content — present a balanced view (benefits AND risks/limitations), never one-sided
 - Practitioner lens — speak as someone who lives these challenges daily
 - Professional yet warm — never preachy or academic
 - Always end with engagement question
