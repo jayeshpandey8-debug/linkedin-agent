@@ -322,7 +322,7 @@ TRIGGER_HTML = """
     <div class="card">
         <div class="avatar">🤖</div>
         <h1>Jayesh LinkedIn Agent</h1>
-        <p class="subtitle">Banking · NBFC · Lean Six Sigma · RCA · GenAI</p>
+        <p class="subtitle">RBI Circulars · AI/GenAI · PMP · Change Management</p>
         <button class="btn btn-primary"    onclick="generatePost()">⚡ Generate & Send to WhatsApp</button>
         <button class="btn btn-secondary"  onclick="testWhatsapp()">📱 Test WhatsApp Connection</button>
         <button class="btn btn-secondary"  onclick="weeklySummary()">📊 Send Weekly Summary</button>
@@ -330,11 +330,11 @@ TRIGGER_HTML = """
         <div id="status" class="status"></div>
         <div class="schedule">
             <h3>📅 Posting Schedule (IST)</h3>
-            <div class="schedule-item"><span class="day">Monday</span>   <span>8:30 AM · Regulatory</span></div>
-            <div class="schedule-item"><span class="day">Tuesday</span>  <span>12:00 PM · RCA/FMEA</span></div>
-            <div class="schedule-item"><span class="day">Wednesday</span><span>8:30 AM · Lean Six Sigma</span></div>
-            <div class="schedule-item"><span class="day">Thursday</span> <span>12:00 PM · Poll</span></div>
-            <div class="schedule-item"><span class="day">Saturday</span> <span>10:00 AM · Personal Story</span></div>
+            <div class="schedule-item"><span class="day">Monday</span>   <span>8:30 AM · RBI Circulars</span></div>
+            <div class="schedule-item"><span class="day">Tuesday</span>  <span>12:00 PM · AI/GenAI</span></div>
+            <div class="schedule-item"><span class="day">Wednesday</span><span>8:30 AM · Change Management</span></div>
+            <div class="schedule-item"><span class="day">Thursday</span> <span>12:00 PM · PMP</span></div>
+            <div class="schedule-item"><span class="day">Saturday</span> <span>10:00 AM · AI/GenAI</span></div>
             <div class="schedule-item"><span class="day">Sunday</span>   <span>9:00 AM · Weekly Summary</span></div>
         </div>
     </div>
