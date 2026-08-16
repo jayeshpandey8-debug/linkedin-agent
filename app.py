@@ -198,6 +198,7 @@ def api_posts():
 def api_generate():
     """Manually trigger post generation — ignores schedule, always runs."""
     import threading
+    from datetime import datetime as _dt
     def _run():
         import news_fetcher, post_generator
         print("[Manual] Force generating post...")
@@ -207,6 +208,12 @@ def api_generate():
         post    = post_generator.generate_post(news, pillar=pillar, fmt=fmt)
         post_id = store.save_draft(post)
         post["id"] = post_id
+        # FIX: this route used to skip these two calls, which meant a manually
+        # generated draft was never marked as "the current pending post" — so
+        # a stale active_post_id from an old draft could silently win approval
+        # instead (this is what published post #7 when #8 was approved).
+        store.set_active_post(post_id)
+        store.update_status(post_id, "whatsapp_sent", sent_to_whatsapp_at=_dt.now().isoformat())
         print(f"[Manual] Draft #{post_id} saved. Sending to WhatsApp...")
         whatsapp.send_draft_for_approval(post_id, post)
         print("[Manual] WhatsApp sent!")

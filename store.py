@@ -153,18 +153,30 @@ def get_post(post_id: int) -> dict | None:
         return dict(row) if row else None
 
 def get_latest_pending() -> dict | None:
-    """Get most recently WhatsApp-sent post — never picks old drafts."""
+    """
+    Get most recently WhatsApp-sent post — never picks old drafts.
+
+    FIXED: previously this returned the DB's active_post_id the moment it found
+    ANY non-terminal-status row there, even if a genuinely newer draft existed —
+    a stale active_post_id (e.g. left over from a much older session, or a route
+    that forgot to update it) would silently win and get approved instead of the
+    real latest draft. This caused an old draft to be published by mistake when
+    a newer one was actually intended. Now every candidate is collected and the
+    highest post ID always wins, regardless of which priority tier found it.
+    """
     with _conn() as conn:
-        # Priority 1: active post from DB state
+        candidates = []
+
+        # Candidate: active post from DB state
         active_id = get_active_post_id()
         if active_id:
             row = conn.execute(
                 "SELECT * FROM posts WHERE id = ?", (active_id,)
             ).fetchone()
             if row and dict(row).get("status") not in ("posted","rejected","failed"):
-                return dict(row)
+                candidates.append(dict(row))
 
-        # Priority 2: most recently WhatsApp-sent
+        # Candidate: most recently WhatsApp-sent
         row = conn.execute("""
             SELECT * FROM posts
             WHERE status = 'whatsapp_sent'
@@ -172,15 +184,23 @@ def get_latest_pending() -> dict | None:
             LIMIT 1
         """).fetchone()
         if row:
-            return dict(row)
+            candidates.append(dict(row))
 
-        # Priority 3: most recent draft (last resort)
-        row = conn.execute("""
-            SELECT * FROM posts
-            WHERE status = 'draft'
-            ORDER BY id DESC LIMIT 1
-        """).fetchone()
-        return dict(row) if row else None
+        # Candidate: most recent draft (last resort, only used if nothing else matched)
+        if not candidates:
+            row = conn.execute("""
+                SELECT * FROM posts
+                WHERE status = 'draft'
+                ORDER BY id DESC LIMIT 1
+            """).fetchone()
+            if row:
+                candidates.append(dict(row))
+
+        if not candidates:
+            return None
+
+        # Never let a stale active_post_id outrank a genuinely newer draft.
+        return max(candidates, key=lambda p: p["id"])
 
 def get_all_posts(limit: int = 50) -> list[dict]:
     with _conn() as conn:

@@ -1,1 +1,11 @@
 .env
+
+# The SQLite DB was committed to git, so every deploy reset production data
+# (posts, active-draft tracking, no-repeat memory) back to an old snapshot.
+# That's what caused post #7 to get published instead of #8 — Railway checked
+# out this stale file, including a stale "active_post_id" pointer, on every
+# fresh deploy. Untracking it stops that; a Railway volume is still needed
+# for real persistence across deploys (see chat).
+jayesh_agent.db
+__pycache__/
+*.pyc
